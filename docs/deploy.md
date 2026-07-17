@@ -14,4 +14,4 @@ ssh dk1 'sudo install -m0755 /tmp/portier /opt/portier/portier && sudo systemctl
 ```
 
 Note: wallet tokens are stored plaintext in the apps table (v1) — encrypt-at-rest is a
-follow-up (KEK pattern like chatsnip). Back up /opt/portier/data.db once real apps exist.
+follow-up (KEK pattern like chatsnip). Backed up: machin-vault target dk1-portier (db + env) on rbm21, restore drill passed.
