@@ -38,7 +38,7 @@ func handle_app_wallet(req) (res) {
         res = bad_request("{\"ok\":0,\"error\":\"wallet_token required (a peage pw_ token; " + peage_url() + "/llms.txt)\"}")
         return
     }
-    sqlite_exec(db, "UPDATE apps SET wallet_token = ?, billing = 'ok' WHERE id = ?", []string{unq(wtv), a.id})
+    sqlite_exec(db, "UPDATE apps SET wallet_token = ?, billing = 'ok' WHERE id = ?", []string{wallet_encrypt(unq(wtv)), a.id})
     sqlite_close(db)
     res = ok_json("{\"ok\":1,\"app_id\":\"" + a.id + "\",\"billing_wallet\":\"set\",\"price\":\"" + str(free_auths()) + " free auths, then 1 EUR per 100 successful auths\"}")
 }

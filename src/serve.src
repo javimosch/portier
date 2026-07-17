@@ -19,7 +19,9 @@ func handle(req) (res) {
 func run_server(port) {
     db := db_open()
     db_migrate(db)
+    migrate_encrypt_wallets(db)
     sqlite_close(db)
+    if env("PORTIER_KEK") == "" { write(2, "{\"warn\":\"PORTIER_KEK not set — app wallet tokens stored PLAINTEXT (dev only)\"}\n") }
     set_trust_proxy(1)
     set_secure_cookies(1)
     set_access_log(1)

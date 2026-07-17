@@ -11,6 +11,7 @@ PEAGE_PORT=18799
 DB=$(mktemp -d)/test.db
 export PORTIER_DB="$DB" PORTIER_PUBLIC_URL="http://127.0.0.1:$PORT" PORTIER_SECRET="test-secret"
 export PORTIER_FREE_AUTHS=2 PORTIER_BLOCK=2
+export PORTIER_KEK="00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
 export PEAGE_MERCHANT_KEY="pm_test" PEAGE_URL="http://127.0.0.1:$PEAGE_PORT"
 
 # mock IdP: /authorize is not hit by tests (demo/oidc-mock short-circuit token+userinfo)
@@ -106,6 +107,10 @@ L=$(curl -s -o /dev/null -w '%{redirect_url}' "$B/auth/$AID/demo?redirect_uri=ht
 
 # --- metering: free tier = 2, wallet set, 3rd+ auths bill in blocks (mock charges 100c) ---
 curl -sf -X POST "$B/v1/apps/wallet" -H "Authorization: Bearer $SEC" -d '{"wallet_token":"pw_fundedwallet123"}' | grep -q '"billing_wallet":"set"' || fail wallet; ok "billing wallet set"
+# the wallet token is encrypted at rest (not plaintext in the DB)
+RAW=$(sqlite3 "$DB" "SELECT wallet_token FROM apps WHERE id='$AID';")
+echo "$RAW" | grep -q '^enc:' || fail enc-prefix; ok "wallet_token stored AES-GCM encrypted (enc: prefix)"
+echo "$RAW" | grep -q 'pw_fundedwallet123' && fail enc-plaintext; ok "plaintext wallet token not in the DB"
 # metering: free=2, block=2. Drive demo auths until auth_count crosses free+block,
 # then a peage charge (mock -> 200) must bump blocks_charged.
 oneauth() {

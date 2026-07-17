@@ -20,6 +20,7 @@ func need_db() (db) {
     db = db_open()
     if db == 0 { fail(110, "cannot open database at " + db_path()) }
     db_migrate(db)
+    migrate_encrypt_wallets(db)
 }
 
 func cmd_app_new(a) {

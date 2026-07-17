@@ -28,12 +28,13 @@ func meter_auth(db, app_id) {
     if chargeable <= a.blocks_charged { return }
     // charge one block (1 EUR) per call; catches up one block at a time
     key := env("PEAGE_MERCHANT_KEY")
-    if a.wallet_token == "" || key == "" {
+    wtok := wallet_decrypt(a.wallet_token)
+    if wtok == "" || key == "" {
         sqlite_exec(db, "UPDATE apps SET billing = 'past_due' WHERE id = ?", []string{app_id})
         return
     }
     idem := app_id + ":block:" + str(a.blocks_charged + 1)
-    body := "{\"wallet_token\":" + json(a.wallet_token) + ",\"amount_cents\":100,\"memo\":\"portier 100 SSO auths\",\"idempotency_key\":" + json(idem) + "}"
+    body := "{\"wallet_token\":" + json(wtok) + ",\"amount_cents\":100,\"memo\":\"portier 100 SSO auths\",\"idempotency_key\":" + json(idem) + "}"
     status, resp, herr := http_request("POST", peage_url() + "/v1/charge", []string{"content-type: application/json", "authorization: Bearer " + key}, body)
     if herr == "" && status == 200 {
         sqlite_exec(db, "UPDATE apps SET blocks_charged = blocks_charged + 1, billing = 'ok' WHERE id = ?", []string{app_id})

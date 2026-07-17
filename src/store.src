@@ -38,6 +38,63 @@ func unq(s) (out) {
 func newid() (id) { id = to_hex(rand_bytes(16)) }
 func tok_hash(t) (h) { h = sha256(t) }
 
+// ---- wallet-token encryption at rest (AES-256-GCM, KEK from PORTIER_KEK) ----
+// Stored form: "enc:" + hex(nonce) + ":" + hex(ciphertext+tag). Plaintext (no
+// "enc:" prefix) is tolerated on read (pre-encryption rows) and rewritten on the
+// next save. If PORTIER_KEK is unset, tokens are stored plaintext (dev only).
+
+func kek() (k, ok) {
+    ok = 0
+    h := env("PORTIER_KEK")
+    if len(h) < 64 { return }
+    k = from_hex(h)
+    if len(k) == 32 { ok = 1 }
+}
+
+func wallet_encrypt(token) (stored) {
+    stored = token
+    if token == "" { return }
+    k, ok := kek()
+    if ok == 0 { return }   // no KEK -> store as-is (dev)
+    nonce := rand_bytes(12)
+    ct := aes_gcm_encrypt(k, nonce, bytes(token), bytes(""))
+    stored = "enc:" + to_hex(nonce) + ":" + to_hex(ct)
+}
+
+// migrate_encrypt_wallets re-encrypts any plaintext wallet_token in place (idempotent:
+// rows already "enc:" are skipped). No-op when PORTIER_KEK is unset.
+func migrate_encrypt_wallets(db) {
+    _, ok := kek()
+    if ok == 0 { return }
+    rows := sqlite_query(db, "SELECT id, COALESCE(wallet_token,'') AS wallet_token FROM apps WHERE wallet_token != '' AND wallet_token NOT LIKE 'enc:%'", []string{})
+    list := parse(rows, []MigRow{})
+    i := 0
+    while i < len(list) {
+        sqlite_exec(db, "UPDATE apps SET wallet_token = ? WHERE id = ?", []string{wallet_encrypt(list[i].wallet_token), list[i].id})
+        i = i + 1
+    }
+    if len(list) > 0 { write(2, "{\"event\":\"wallets_encrypted\",\"count\":" + str(len(list)) + "}\n") }
+}
+
+type MigRow struct {
+    id           string
+    wallet_token string
+}
+
+func wallet_decrypt(stored) (token) {
+    token = stored
+    if has_prefix(stored, "enc:") == false { return }   // legacy plaintext
+    k, ok := kek()
+    if ok == 0 { token = ""  return }   // encrypted but no key -> unusable
+    rest := substr(stored, 4, len(stored))
+    ci := index(rest, ":")
+    if ci <= 0 { token = ""  return }
+    nonce := from_hex(substr(rest, 0, ci))
+    ct := from_hex(substr(rest, ci + 1, len(rest)))
+    pt := aes_gcm_decrypt(k, nonce, ct, bytes(""))
+    token = bytes_str(pt)
+}
+
 func signing_secret() (s) {
     s = env("PORTIER_SECRET")
     if s == "" { s = "dev-secret-not-for-production" }
