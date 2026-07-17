@@ -36,7 +36,7 @@ curl -s -X POST https://sso.intrane.fr/v1/token \
 
 **github**, **google**, generic **oidc** (Keycloak/Auth0/Okta/GitLab — supply
 `authorize_url`/`token_url`/`userinfo_url`), and a **demo** provider for curl-testing the
-whole flow. **SAML** is on the roadmap — it needs RSA + XML-DSig the pure-MFL runtime
+whole flow. And **[machin-idp](https://github.com/javimosch/machin-idp)** (`idp.intrane.fr`) — the intrane OIDC provider — gives your apps "Login with intrane" through the same broker. **SAML** is on the roadmap — it needs RSA + XML-DSig the pure-MFL runtime
 lacks ([machin#484](https://github.com/javimosch/machin/issues/484)).
 
 ## Billing (peage)
