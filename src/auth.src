@@ -1,0 +1,204 @@
+// The OIDC/OAuth authorization-code flow.
+//   GET  /auth/<app_id>/<provider>?redirect_uri=&state=   start (browser -> IdP)
+//   GET  /cb/<provider>?code=&state=                       IdP callback -> app redirect
+//   POST /v1/token   Bearer <app_secret> {code}            exchange for the identity
+//
+// Security: state is HMAC-signed and carries app_id|provider|app_redirect|app_state|exp
+// (CSRF + tamper-proof); the app_redirect must match a registered redirect_uri
+// (open-redirect guard); the portier code is one-time, short-lived, and only
+// redeemable with the app secret. No local RS256/SAML — v1 trusts the IdP token
+// endpoint over TLS (confidential-client code flow), which needs no RSA.
+
+// state = base64(payload) + "." + hmac(secret, base64(payload))
+func state_sign(payload) (s) {
+    b := base64_encode(payload)
+    s = b + "." + hmac_sha256(signing_secret(), b)
+}
+
+func state_verify(s) (payload, ok) {
+    payload = ""
+    ok = 0
+    di := index(s, ".")
+    if di <= 0 { return }
+    b := substr(s, 0, di)
+    tag := substr(s, di + 1, len(s))
+    if hmac_sha256(signing_secret(), b) != tag { return }
+    payload = base64_decode(b)
+    ok = 1
+}
+
+// redirect_registered: exact match against the app's comma-separated redirect_uris
+func redirect_registered(a, uri) (ok) {
+    ok = 0
+    for _, r := range split(a.redirect_uris, ",") {
+        if trim(r) == uri { ok = 1  return }
+    }
+}
+
+func html_error(msg) (res) {
+    res = response("400 Bad Request", "text/html; charset=utf-8", "<!doctype html><meta charset=utf-8><body style=\"font-family:ui-monospace,monospace;background:#0a0a0c;color:#e2e8f0;padding:2rem\"><h2 style=\"color:#f87171\">portier: " + msg + "</h2></body>")
+}
+
+// GET /auth/<app_id>/<provider> — start a login.
+func handle_auth_start(req) (res) {
+    p := pathof(req)
+    rest := param(p, "/auth/")
+    slash := index(rest, "/")
+    if slash <= 0 { res = html_error("bad login URL — use /auth/&lt;app_id&gt;/&lt;provider&gt;")  return }
+    app_id := substr(rest, 0, slash)
+    provider := substr(rest, slash + 1, len(rest))
+    app_redirect := query(req, "redirect_uri")
+    app_state := query(req, "state")
+
+    db := db_open()
+    if db == 0 { res = html_error("db error")  return }
+    a, aok := app_by_id(db, app_id)
+    if aok == 0 { sqlite_close(db)  res = html_error("unknown app")  return }
+    if app_redirect == "" || redirect_registered(a, app_redirect) == 0 {
+        sqlite_close(db)
+        res = html_error("redirect_uri is not registered for this app (open-redirect blocked)")
+        return
+    }
+    if billing_blocks_login(a) == 1 {
+        sqlite_close(db)
+        res = html_error("this app is over its free tier and its billing wallet is empty — the app owner must fund it (peage)")
+        return
+    }
+    pr, pok := provider_by(db, app_id, provider)
+    sqlite_close(db)
+    if pok == 0 { res = html_error("provider '" + provider + "' is not configured for this app")  return }
+
+    // signed state carries everything the callback needs — no server-side session
+    exp := now() + 600
+    payload := app_id + "|" + provider + "|" + app_redirect + "|" + app_state + "|" + str(exp)
+    st := state_sign(payload)
+
+    // demo provider short-circuits the real IdP (curl-testable end to end)
+    if pr.kind == "demo" {
+        res = redirect(public_url(req) + "/cb/" + provider + "?code=demo_code&state=" + url_encode(st))
+        return
+    }
+    cb := public_url(req) + "/cb/" + provider
+    au := pr.authorize_url + "?response_type=code&client_id=" + url_encode(pr.client_id) + "&redirect_uri=" + url_encode(cb) + "&scope=" + url_encode(pr.scope) + "&state=" + url_encode(st)
+    res = redirect(au)
+}
+
+// exchange_code swaps the IdP auth code for an access token, then fetches userinfo.
+// Returns the identity JSON ({sub,email,name,provider}) or ("", err).
+func exchange_code(pr, code, cb) (identity, err) {
+    identity = ""
+    err = ""
+    body := "grant_type=authorization_code&code=" + url_encode(code) + "&redirect_uri=" + url_encode(cb) + "&client_id=" + url_encode(pr.client_id) + "&client_secret=" + url_encode(pr.client_secret)
+    hdrs := []string{"content-type: application/x-www-form-urlencoded", "accept: application/json"}
+    status, resp, herr := http_request("POST", pr.token_url, hdrs, body)
+    if herr != "" || status != 200 {
+        err = "token exchange failed (status " + str(status) + ")"
+        return
+    }
+    atv, aterr := json_get(resp, ".access_token")
+    if aterr != "" { err = "no access_token from IdP"  return }
+    at := unq(atv)
+    // userinfo
+    uhdrs := []string{"authorization: Bearer " + at, "accept: application/json", "user-agent: portier"}
+    ustatus, uresp, uherr := http_request("GET", pr.userinfo_url, uhdrs, "")
+    if uherr != "" || ustatus != 200 { err = "userinfo failed (status " + str(ustatus) + ")"  return }
+    identity = normalize_identity(pr, uresp)
+}
+
+// normalize_identity maps provider-specific userinfo into {sub,email,name,provider,raw}
+func normalize_identity(pr, uresp) (j) {
+    sub := ""
+    email := ""
+    name := ""
+    if pr.kind == "github" {
+        idv, _ := json_get(uresp, ".id")
+        sub = unq(idv)
+        emv, _ := json_get(uresp, ".email")
+        email = unq(emv)
+        nmv, _ := json_get(uresp, ".name")
+        name = unq(nmv)
+        if name == "" || name == "null" { lv, _ := json_get(uresp, ".login")  name = unq(lv) }
+    } else {
+        sv, _ := json_get(uresp, ".sub")
+        sub = unq(sv)
+        emv, _ := json_get(uresp, ".email")
+        email = unq(emv)
+        nmv, _ := json_get(uresp, ".name")
+        name = unq(nmv)
+    }
+    if email == "null" { email = "" }
+    if name == "null" { name = "" }
+    j = "{\"sub\":" + json(sub) + ",\"email\":" + json(email) + ",\"name\":" + json(name) + ",\"provider\":" + json(pr.name) + "}"
+}
+
+// GET /cb/<provider> — the IdP redirects here. Verify state, exchange, meter, mint
+// a one-time portier code, redirect the browser back to the app's redirect_uri.
+func handle_callback(req) (res) {
+    provider := param(pathof(req), "/cb/")
+    st := query(req, "state")
+    code := query(req, "code")
+    payload, sok := state_verify(st)
+    if sok == 0 { res = html_error("bad or tampered state")  return }
+    parts := split(payload, "|")
+    if len(parts) < 5 { res = html_error("bad state payload")  return }
+    app_id := parts[0]
+    app_redirect := parts[2]
+    app_state := parts[3]
+    exp := parse_int(parts[4])
+    if now() > exp { res = html_error("login expired — start again")  return }
+
+    db := db_open()
+    if db == 0 { res = html_error("db error")  return }
+    pr, pok := provider_by(db, app_id, provider)
+    if pok == 0 { sqlite_close(db)  res = html_error("unknown provider")  return }
+
+    identity := ""
+    if pr.kind == "demo" {
+        identity = "{\"sub\":\"demo-user-1\",\"email\":\"demo@portier\",\"name\":\"Demo User\",\"provider\":\"" + pr.name + "\"}"
+    } else {
+        cb := public_url(req) + "/cb/" + provider
+        id2, err := exchange_code(pr, code, cb)
+        if err != "" { sqlite_close(db)  res = html_error("IdP exchange: " + err)  return }
+        identity = id2
+    }
+
+    // meter this successful auth (best-effort billing, never blocks the user)
+    meter_auth(db, app_id)
+
+    // mint a one-time code the app exchanges server-side for the identity
+    pcode := "pc_" + newid()
+    sqlite_exec(db, "INSERT INTO codes(code, app_id, identity, expires_at) VALUES(?,?,?,?)", []string{pcode, app_id, identity, str(now() + 300)})
+    sqlite_close(db)
+
+    sep := "?"
+    if index(app_redirect, "?") >= 0 { sep = "&" }
+    dest := app_redirect + sep + "code=" + url_encode(pcode)
+    if app_state != "" { dest = dest + "&state=" + url_encode(app_state) }
+    res = redirect(dest)
+}
+
+// POST /v1/token  Bearer <app_secret> {code} -> {identity}. One-time, 5-min TTL.
+func handle_token(req) (res) {
+    db := db_open()
+    if db == 0 { res = response("500 Internal Server Error", "application/json", "{\"ok\":0,\"error\":\"db\"}")  return }
+    a, ok := app_by_secret(db, req)
+    if ok == 0 { sqlite_close(db)  res = response("401 Unauthorized", "application/json", "{\"ok\":0,\"error\":\"unknown app secret\"}")  return }
+    cdv, cderr := json_get(req.body, ".code")
+    if cderr != "" { sqlite_close(db)  res = bad_request("{\"ok\":0,\"error\":\"code required\"}")  return }
+    code := unq(cdv)
+    // parse into a struct so `identity` is the real (unescaped) JSON text, emitted
+    // raw as a nested object (json_get would hand back a double-encoded string)
+    rows := sqlite_query(db, "SELECT app_id, identity, expires_at FROM codes WHERE code = ?", []string{code})
+    list := parse(rows, []CodeRow{})
+    if len(list) == 0 { sqlite_close(db)  res = response("404 Not Found", "application/json", "{\"ok\":0,\"error\":\"unknown or used code\"}")  return }
+    c := list[0]
+    if c.app_id != a.id {
+        sqlite_close(db)
+        res = response("403 Forbidden", "application/json", "{\"ok\":0,\"error\":\"code belongs to another app\"}")
+        return
+    }
+    sqlite_exec(db, "DELETE FROM codes WHERE code = ?", []string{code})   // one-time
+    sqlite_close(db)
+    if now() > c.expires_at { res = response("410 Gone", "application/json", "{\"ok\":0,\"error\":\"code expired\"}")  return }
+    res = ok_json("{\"ok\":1,\"identity\":" + c.identity + "}")
+}

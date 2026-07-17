@@ -1,0 +1,123 @@
+// Relying-app management: register, configure a billing wallet, configure a
+// provider, read status. All but register require the app secret (Bearer).
+
+func handle_app_create(req) (res) {
+    db := db_open()
+    if db == 0 { res = response("500 Internal Server Error", "application/json", "{\"ok\":0,\"error\":\"db\"}")  return }
+    if rate_allow(db, "ac:" + client_ip(req), 3600, 10) == false {
+        sqlite_close(db)
+        res = response("429 Too Many Requests", "application/json", "{\"ok\":0,\"error\":\"too many apps — slow down\"}")
+        return
+    }
+    nmv, _ := json_get(req.body, ".name")
+    ruv, ruerr := json_get(req.body, ".redirect_uris")
+    name := unq(nmv)
+    rus := ""
+    if ruerr == "" { rus = unq(ruv) }
+    if rus == "" {
+        sqlite_close(db)
+        res = bad_request("{\"ok\":0,\"error\":\"redirect_uris required (comma-separated absolute URLs your app receives the login result at)\"}")
+        return
+    }
+    id := "app_" + substr(newid(), 0, 12)
+    secret := "psk_" + newid()
+    sqlite_exec(db, "INSERT INTO apps(id, secret, name, redirect_uris, auth_count, blocks_charged, billing, created_at) VALUES(?,?,?,?,0,0,'ok',?)", []string{id, tok_hash(secret), name, rus, str(now())})
+    sqlite_close(db)
+    write(2, "{\"event\":\"app_created\",\"app\":\"" + id + "\"}\n")
+    res = created("{\"ok\":1,\"app_id\":\"" + id + "\",\"app_secret\":\"" + secret + "\",\"note\":\"save the secret — shown once. Next: POST /v1/apps/provider to add an IdP (github/google/oidc/demo), POST /v1/apps/wallet to set a peage billing wallet. Then send users to /auth/" + id + "/<provider>.\"}")
+}
+
+func handle_app_wallet(req) (res) {
+    db := db_open()
+    if db == 0 { res = response("500 Internal Server Error", "application/json", "{\"ok\":0,\"error\":\"db\"}")  return }
+    a, ok := app_by_secret(db, req)
+    if ok == 0 { sqlite_close(db)  res = response("401 Unauthorized", "application/json", "{\"ok\":0,\"error\":\"unknown app secret\"}")  return }
+    wtv, wterr := json_get(req.body, ".wallet_token")
+    if wterr != "" || len(unq(wtv)) < 16 {
+        sqlite_close(db)
+        res = bad_request("{\"ok\":0,\"error\":\"wallet_token required (a peage pw_ token; " + peage_url() + "/llms.txt)\"}")
+        return
+    }
+    sqlite_exec(db, "UPDATE apps SET wallet_token = ?, billing = 'ok' WHERE id = ?", []string{unq(wtv), a.id})
+    sqlite_close(db)
+    res = ok_json("{\"ok\":1,\"app_id\":\"" + a.id + "\",\"billing_wallet\":\"set\",\"price\":\"" + str(free_auths()) + " free auths, then 1 EUR per 100 successful auths\"}")
+}
+
+// resolve provider presets so the app doesn't supply endpoint URLs for the common IdPs
+func provider_preset(kind) (authorize, token, userinfo, scope) {
+    if kind == "github" {
+        authorize = "https://github.com/login/oauth/authorize"
+        token = "https://github.com/login/oauth/access_token"
+        userinfo = "https://api.github.com/user"
+        scope = "read:user user:email"
+        return
+    }
+    if kind == "google" {
+        authorize = "https://accounts.google.com/o/oauth2/v2/auth"
+        token = "https://oauth2.googleapis.com/token"
+        userinfo = "https://openidconnect.googleapis.com/v1/userinfo"
+        scope = "openid email profile"
+        return
+    }
+}
+
+func handle_app_provider(req) (res) {
+    db := db_open()
+    if db == 0 { res = response("500 Internal Server Error", "application/json", "{\"ok\":0,\"error\":\"db\"}")  return }
+    a, ok := app_by_secret(db, req)
+    if ok == 0 { sqlite_close(db)  res = response("401 Unauthorized", "application/json", "{\"ok\":0,\"error\":\"unknown app secret\"}")  return }
+    nmv, nmerr := json_get(req.body, ".name")
+    kdv, kderr := json_get(req.body, ".kind")
+    name := unq(nmv)
+    kind := unq(kdv)
+    if nmerr != "" || name == "" { name = kind }
+    if kderr != "" || (kind != "github" && kind != "google" && kind != "oidc" && kind != "demo") {
+        sqlite_close(db)
+        res = bad_request("{\"ok\":0,\"error\":\"kind must be one of: github, google, oidc (generic OIDC/OAuth), demo\"}")
+        return
+    }
+    ciov, _ := json_get(req.body, ".client_id")
+    csev, _ := json_get(req.body, ".client_secret")
+    client_id := unq(ciov)
+    client_secret := unq(csev)
+    authorize, token, userinfo, scope := provider_preset(kind)
+    if kind == "oidc" {
+        auv, _ := json_get(req.body, ".authorize_url")
+        tuv, _ := json_get(req.body, ".token_url")
+        uiv, _ := json_get(req.body, ".userinfo_url")
+        scv, scerr := json_get(req.body, ".scope")
+        authorize = unq(auv)
+        token = unq(tuv)
+        userinfo = unq(uiv)
+        scope = "openid email profile"
+        if scerr == "" && unq(scv) != "" { scope = unq(scv) }
+        if authorize == "" || token == "" || userinfo == "" {
+            sqlite_close(db)
+            res = bad_request("{\"ok\":0,\"error\":\"kind=oidc requires authorize_url, token_url, userinfo_url (from the IdP's .well-known/openid-configuration)\"}")
+            return
+        }
+    }
+    if kind != "demo" && (client_id == "" || client_secret == "") {
+        sqlite_close(db)
+        res = bad_request("{\"ok\":0,\"error\":\"client_id and client_secret required (register a redirect_uri of " + public_url(req) + "/cb/" + name + " at your IdP)\"}")
+        return
+    }
+    sqlite_exec(db, "INSERT INTO providers(app_id, name, kind, client_id, client_secret, authorize_url, token_url, userinfo_url, scope) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(app_id, name) DO UPDATE SET kind=excluded.kind, client_id=excluded.client_id, client_secret=excluded.client_secret, authorize_url=excluded.authorize_url, token_url=excluded.token_url, userinfo_url=excluded.userinfo_url, scope=excluded.scope", []string{a.id, name, kind, client_id, client_secret, authorize, token, userinfo, scope})
+    sqlite_close(db)
+    res = ok_json("{\"ok\":1,\"app_id\":\"" + a.id + "\",\"provider\":\"" + name + "\",\"kind\":\"" + kind + "\",\"idp_redirect_uri\":\"" + public_url(req) + "/cb/" + name + "\",\"login_url\":\"" + public_url(req) + "/auth/" + a.id + "/" + name + "\"}")
+}
+
+func handle_app_status(req) (res) {
+    db := db_open()
+    if db == 0 { res = response("500 Internal Server Error", "application/json", "{\"ok\":0,\"error\":\"db\"}")  return }
+    a, ok := app_by_secret(db, req)
+    if ok == 0 { sqlite_close(db)  res = response("401 Unauthorized", "application/json", "{\"ok\":0,\"error\":\"unknown app secret\"}")  return }
+    prows := sqlite_query(db, "SELECT name, kind FROM providers WHERE app_id = ?", []string{a.id})
+    sqlite_close(db)
+    free := free_auths()
+    remaining := free - a.auth_count
+    if remaining < 0 { remaining = 0 }
+    wallet := "unset"
+    if a.wallet_token != "" { wallet = "set" }
+    res = ok_json("{\"ok\":1,\"app_id\":\"" + a.id + "\",\"name\":" + json(a.name) + ",\"auth_count\":" + str(a.auth_count) + ",\"free_auths\":" + str(free) + ",\"free_remaining\":" + str(remaining) + ",\"blocks_charged\":" + str(a.blocks_charged) + ",\"billing\":\"" + a.billing + "\",\"billing_wallet\":\"" + wallet + "\",\"providers\":" + prows + "}")
+}

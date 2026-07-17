@@ -1,0 +1,35 @@
+// portier — CLI entry point and command routing.
+
+func app_version() (v) { v = "0.1.0" }
+
+func resolve_port(a) (port) {
+    p := opt(a, "-port", env("PORT"))
+    if p == "" { p = "8797" }
+    port = parse_int(p)
+}
+
+func main() {
+    a := args()
+    cmd := "help"
+    if len(a) > 1 { cmd = a[1] }
+
+    if cmd == "serve" {
+        run_server(resolve_port(a))
+    } else if cmd == "app-new" {
+        cmd_app_new(a)
+    } else if cmd == "apps" {
+        cmd_apps(a)
+    } else if cmd == "stats" {
+        cmd_stats()
+    } else if cmd == "guide" {
+        base := env("PORTIER_PUBLIC_URL")
+        if base == "" { base = "http://localhost:8797" }
+        println(guide_json(base))
+    } else if cmd == "version" {
+        out_ok("{\"version\":\"" + app_version() + "\"}")
+    } else if cmd == "help-json" {
+        println(help_json())
+    } else {
+        println(help_text())
+    }
+}

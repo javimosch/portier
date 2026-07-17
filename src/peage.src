@@ -1,0 +1,52 @@
+// Metering: 1 EUR per 100 successful auths, charged to the app's peage wallet.
+// (A 1-cent-per-auth charge is impossible — peage's fee floor is 1 cent — so we
+// bill in blocks of 100 = 100 cents, respecting the floor and netting the merchant.)
+// First PORTIER_FREE_AUTHS auths are free. Never blocks an in-flight login over
+// billing: charge is best-effort; a decline flags the app 'past_due' (the app owner's
+// problem, surfaced at login *initiation*, not to the end user mid-flow).
+
+func peage_url() (u) {
+    u = env("PEAGE_URL")
+    if u == "" { u = "https://peage.intrane.fr" }
+}
+
+// auths per billed block (default 100 = 1 EUR/100; lowered in tests)
+func block_size() (n) {
+    n = parse_int(env("PORTIER_BLOCK"))
+    if env("PORTIER_BLOCK") == "" { n = 100 }
+}
+
+// meter_auth is called after a successful auth. Increments the count and, when a
+// new block of 100 completes beyond the free tier, charges the wallet 1 EUR.
+func meter_auth(db, app_id) {
+    sqlite_exec(db, "UPDATE apps SET auth_count = auth_count + 1 WHERE id = ?", []string{app_id})
+    a, ok := app_by_id(db, app_id)
+    if ok == 0 { return }
+    // blocks that should have been charged = completed blocks beyond the free tier
+    chargeable := (a.auth_count - free_auths()) / block_size()
+    if chargeable < 0 { chargeable = 0 }
+    if chargeable <= a.blocks_charged { return }
+    // charge one block (1 EUR) per call; catches up one block at a time
+    key := env("PEAGE_MERCHANT_KEY")
+    if a.wallet_token == "" || key == "" {
+        sqlite_exec(db, "UPDATE apps SET billing = 'past_due' WHERE id = ?", []string{app_id})
+        return
+    }
+    idem := app_id + ":block:" + str(a.blocks_charged + 1)
+    body := "{\"wallet_token\":" + json(a.wallet_token) + ",\"amount_cents\":100,\"memo\":\"portier 100 SSO auths\",\"idempotency_key\":" + json(idem) + "}"
+    status, resp, herr := http_request("POST", peage_url() + "/v1/charge", []string{"content-type: application/json", "authorization: Bearer " + key}, body)
+    if herr == "" && status == 200 {
+        sqlite_exec(db, "UPDATE apps SET blocks_charged = blocks_charged + 1, billing = 'ok' WHERE id = ?", []string{app_id})
+        write(2, "{\"event\":\"metered\",\"app\":\"" + app_id + "\",\"block\":" + str(a.blocks_charged + 1) + "}\n")
+    } else {
+        sqlite_exec(db, "UPDATE apps SET billing = 'past_due' WHERE id = ?", []string{app_id})
+        write(2, "{\"warn\":\"portier charge declined\",\"app\":\"" + app_id + "\",\"status\":" + str(status) + "}\n")
+    }
+}
+
+// billing_blocks_login: an app that is past_due AND out of free auths cannot START
+// new logins (the owner must fund) — but never interrupts an in-flight one.
+func billing_blocks_login(a) (blocked) {
+    blocked = 0
+    if a.billing == "past_due" && a.auth_count >= free_auths() { blocked = 1 }
+}

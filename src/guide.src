@@ -1,0 +1,75 @@
+// Agent-facing docs: /llms.txt (front door) + /guide (JSON).
+
+func llms_txt(base) (t) {
+    t = "# portier — SSO for your app in one redirect (OIDC/OAuth), pay-per-auth\n\n" +
+        "Add 'Login with Google / GitHub / any OIDC provider' to your app without\n" +
+        "implementing OAuth. portier brokers the authorization-code flow and hands your\n" +
+        "app back a verified identity. 100 free auths, then 1 EUR per 100 successful\n" +
+        "auths via a peage wallet — no per-seat subscription. Base URL: " + base + "\n\n" +
+        "## Setup (curl)\n\n" +
+        "1. Register your app (save the secret — shown once):\n" +
+        "   curl -s -X POST " + base + "/v1/apps -d '{\"name\":\"my app\",\"redirect_uris\":\"https://myapp.com/auth/done\"}'\n" +
+        "   -> {\"app_id\":\"app_..\",\"app_secret\":\"psk_..\"}\n" +
+        "2. Add a provider. Fastest to try — the built-in demo (no real IdP):\n" +
+        "   curl -s -X POST " + base + "/v1/apps/provider -H 'Authorization: Bearer psk_..' -d '{\"kind\":\"demo\"}'\n" +
+        "   Real GitHub (make an OAuth app at github.com/settings/developers, callback = " + base + "/cb/github):\n" +
+        "   curl -s -X POST " + base + "/v1/apps/provider -H 'Authorization: Bearer psk_..' -d '{\"kind\":\"github\",\"client_id\":\"..\",\"client_secret\":\"..\"}'\n" +
+        "   Google: {\"kind\":\"google\",...}. Any other OIDC: {\"kind\":\"oidc\",\"client_id\":..,\"client_secret\":..,\"authorize_url\":..,\"token_url\":..,\"userinfo_url\":..}\n" +
+        "3. Set a billing wallet (peage — funds the pay-per-auth past the free tier):\n" +
+        "   curl -s -X POST " + base + "/v1/apps/wallet -H 'Authorization: Bearer psk_..' -d '{\"wallet_token\":\"pw_..\"}'\n" +
+        "   No wallet? " + peage_url() + "/llms.txt\n\n" +
+        "## The login flow\n\n" +
+        "1. Send the user's browser to:\n" +
+        "   " + base + "/auth/<app_id>/<provider>?redirect_uri=<your registered URL>&state=<your csrf>\n" +
+        "2. portier runs the OAuth dance with the IdP, then redirects the browser back to\n" +
+        "   your redirect_uri with ?code=<portier code>&state=<your csrf>.\n" +
+        "3. Your server exchanges that code for the verified identity (Bearer app_secret):\n" +
+        "   curl -s -X POST " + base + "/v1/token -H 'Authorization: Bearer psk_..' -d '{\"code\":\"pc_..\"}'\n" +
+        "   -> {\"identity\":{\"sub\":\"..\",\"email\":\"..\",\"name\":\"..\",\"provider\":\"github\"}}\n\n" +
+        "## Endpoints\n\n" +
+        "POST /v1/apps {name, redirect_uris}                    -> {app_id, app_secret}\n" +
+        "POST /v1/apps/provider   Bearer secret                 -> configure github|google|oidc|demo\n" +
+        "POST /v1/apps/wallet     Bearer secret {wallet_token}  -> set the peage billing wallet\n" +
+        "GET  /v1/apps/me         Bearer secret                 -> auth_count, free tier, billing status\n" +
+        "GET  /auth/<app_id>/<provider>?redirect_uri=&state=    -> start a login (browser)\n" +
+        "GET  /cb/<provider>                                    -> IdP callback (register this at your IdP)\n" +
+        "POST /v1/token           Bearer secret {code}          -> the verified identity (one-time)\n" +
+        "GET  /_health\n\n" +
+        "## Notes\n\n" +
+        "- v1 supports OIDC/OAuth (github, google, generic OIDC). SAML is on the roadmap\n" +
+        "  (needs RSA/XML-DSig — tracked in machin#484).\n" +
+        "- redirect_uri must exactly match a registered one (open-redirect protection).\n" +
+        "- The portier code is one-time and short-lived; identities are never put in the\n" +
+        "  browser URL — only the code, exchanged server-side with your secret.\n"
+}
+
+func guide_json(base) (j) {
+    j = "{\"name\":\"portier\",\"version\":\"" + app_version() + "\",\"tagline\":\"SSO for your app in one redirect (OIDC/OAuth) — 100 free auths, then 1 EUR per 100 via peage\"," +
+        "\"base_url\":" + json(base) + ",\"free_auths\":" + str(free_auths()) + ",\"price\":\"1 EUR per 100 successful auths\",\"pay_rail\":\"peage\",\"protocols\":[\"oidc\",\"oauth\"],\"saml\":\"roadmap (machin#484)\"," +
+        "\"providers\":[\"github\",\"google\",\"oidc\",\"demo\"]," +
+        "\"flow\":[\"POST /v1/apps -> app_id + secret\",\"POST /v1/apps/provider -> configure IdP\",\"send user to /auth/<app_id>/<provider>?redirect_uri=&state=\",\"receive ?code= at your redirect_uri\",\"POST /v1/token {code} -> identity\"]," +
+        "\"endpoints\":[" +
+        "{\"method\":\"POST\",\"path\":\"/v1/apps\",\"body\":{\"name\":\"optional\",\"redirect_uris\":\"required, comma-separated\"}}," +
+        "{\"method\":\"POST\",\"path\":\"/v1/apps/provider\",\"auth\":\"Bearer app secret\",\"body\":{\"kind\":\"github|google|oidc|demo\",\"client_id\":\"..\",\"client_secret\":\"..\"}}," +
+        "{\"method\":\"POST\",\"path\":\"/v1/apps/wallet\",\"auth\":\"Bearer app secret\",\"body\":{\"wallet_token\":\"pw_..\"}}," +
+        "{\"method\":\"GET\",\"path\":\"/v1/apps/me\",\"auth\":\"Bearer app secret\"}," +
+        "{\"method\":\"GET\",\"path\":\"/auth/<app_id>/<provider>\",\"query\":\"redirect_uri, state\"}," +
+        "{\"method\":\"GET\",\"path\":\"/cb/<provider>\",\"note\":\"IdP callback — register at your IdP\"}," +
+        "{\"method\":\"POST\",\"path\":\"/v1/token\",\"auth\":\"Bearer app secret\",\"body\":{\"code\":\"pc_..\"}}" +
+        "]}"
+}
+
+func help_text() (h) {
+    h = "portier — SSO broker for apps (OIDC/OAuth), pay-per-auth via peage\n\n" +
+        "usage: portier <command>\n\n" +
+        "  serve [-port 8797]        run the HTTP service ($PORT respected)\n" +
+        "  app-new -name x -redirect https://..   register an app (operator)\n" +
+        "  apps [-limit 50]          list apps as JSON\n" +
+        "  stats                     totals: apps, auths, providers\n" +
+        "  guide | version | help | help-json\n\n" +
+        "env: PORTIER_DB PORTIER_PUBLIC_URL PORTIER_SECRET PORTIER_FREE_AUTHS PEAGE_MERCHANT_KEY PEAGE_URL\n"
+}
+
+func help_json() (h) {
+    h = "{\"name\":\"portier\",\"version\":\"" + app_version() + "\",\"commands\":[\"serve\",\"app-new\",\"apps\",\"stats\",\"guide\",\"version\",\"help\",\"help-json\"]}"
+}

@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>portier — SSO for your app in one redirect, pay-per-auth</title>
+<meta name="description" content="Add Login-with-Google/GitHub/any-OIDC to your app without implementing OAuth. 100 free auths, then 1 EUR per 100 via peage. No per-seat SSO tax.">
+<style>
+:root{--bg:#0a0a0c;--panel:#101014;--line:#1f1f26;--fg:#e2e8f0;--dim:#8b93a3;--acc:#a78bfa}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;line-height:1.55}
+main{max-width:820px;margin:0 auto;padding:3rem 1.25rem}
+h1{font-size:2rem;margin:.2rem 0}h1 em{color:var(--acc);font-style:normal}
+h2{color:var(--acc);font-size:1.05rem;margin-top:2.4rem}
+p{color:var(--dim)}strong{color:var(--fg)}
+pre{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px;overflow-x:auto;font-size:13px}
+.tag{display:inline-block;border:1px solid var(--line);border-radius:99px;padding:2px 10px;font-size:12px;color:var(--dim);margin-right:6px}
+a{color:var(--acc)}footer{margin-top:3rem;color:var(--dim);font-size:12.5px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}@media(max-width:640px){.grid{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:1rem}
+.card h3{margin:0 0 .4rem;color:var(--fg);font-size:.95rem}.card p{font-size:13px;margin:.3rem 0}
+</style>
+</head>
+<body>
+<main>
+<div><span class="tag">agent-first</span><span class="tag">no per-seat tax</span><span class="tag">pay-per-auth</span><span class="tag">one static binary</span></div>
+<h1><em>portier</em> — SSO for your app in one redirect</h1>
+<p><strong>Add "Login with Google / GitHub / any OIDC provider" without implementing OAuth.</strong> portier brokers the authorization-code flow and hands your app back a verified identity. No per-seat SSO subscription — <strong>100 free auths, then 1&nbsp;EUR per 100 successful auths</strong>, funded by a <a href="https://peage.intrane.fr">peage</a> wallet.</p>
+
+<pre># 1. register your app
+curl -s -X POST https://sso.intrane.fr/v1/apps \
+  -d '{"name":"my app","redirect_uris":"https://myapp.com/auth/done"}'
+# -&gt; {"app_id":"app_…","app_secret":"psk_…"}
+
+# 2. add a provider (try the built-in demo first — no real IdP needed)
+curl -s -X POST https://sso.intrane.fr/v1/apps/provider \
+  -H 'Authorization: Bearer psk_…' -d '{"kind":"demo"}'
+
+# 3. send the user to portier; get ?code= back at your redirect_uri; exchange it:
+curl -s -X POST https://sso.intrane.fr/v1/token \
+  -H 'Authorization: Bearer psk_…' -d '{"code":"pc_…"}'
+# -&gt; {"identity":{"sub":"…","email":"…","name":"…","provider":"github"}}</pre>
+
+<div class="grid">
+<div class="card"><h3>The auth glue, deleted</h3><p>OAuth redirects, token exchange, userinfo, CSRF-safe state, open-redirect guards — portier does it. Your app makes two curls.</p></div>
+<div class="card"><h3>Pay only for logins that work</h3><p>Billed per <em>successful</em> auth, in blocks of 100 (1&nbsp;EUR), from a prepaid wallet. No MAU tiers, no annual contract.</p></div>
+</div>
+
+<h2>providers</h2>
+<p><strong>GitHub, Google, and any generic OIDC provider</strong> (Keycloak, Auth0, Okta, GitLab — supply the discovery URLs). A built-in <strong>demo</strong> provider lets you test the whole flow with curl before wiring a real IdP. SAML is on the <a href="https://github.com/javimosch/machin/issues/484">roadmap</a> (it needs RSA/XML-DSig that the pure-MFL runtime doesn't have yet).</p>
+
+<h2>the interface is the docs</h2>
+<pre>curl -s https://sso.intrane.fr/llms.txt   # the full contract, written for agents
+curl -s https://sso.intrane.fr/guide      # the same contract as JSON</pre>
+
+<footer>portier is a single static binary in <a href="https://github.com/javimosch/machin">machin (MFL)</a>. An <a href="https://intrane.fr">intrane.fr</a> experiment. Billed via <a href="https://peage.intrane.fr">peage</a> — pay (péage), receive (<a href="https://relais.intrane.fr">relais</a>), authenticate (portier). Contact: javi@intrane.fr</footer>
+</main>
+</body>
+</html>

@@ -1,0 +1,49 @@
+// Operator CLI. stdout = JSON, stderr = structured errors.
+
+func out_ok(data_json) { println("{\"ok\":true,\"data\":" + data_json + "}") }
+
+func fail(code, msg) {
+    write(2, "{\"ok\":false,\"error\":" + json(msg) + ",\"code\":" + str(code) + "}\n")
+    exit(code)
+}
+
+func opt(a, name, def) (val) {
+    val = def
+    i := 0
+    while i < len(a) {
+        if a[i] == name && i + 1 < len(a) { val = a[i + 1] }
+        i = i + 1
+    }
+}
+
+func need_db() (db) {
+    db = db_open()
+    if db == 0 { fail(110, "cannot open database at " + db_path()) }
+    db_migrate(db)
+}
+
+func cmd_app_new(a) {
+    redirect := opt(a, "-redirect", "")
+    if redirect == "" { fail(80, "usage: app-new -name x -redirect https://myapp/cb") }
+    name := opt(a, "-name", "")
+    db := need_db()
+    id := "app_" + substr(newid(), 0, 12)
+    secret := "psk_" + newid()
+    sqlite_exec(db, "INSERT INTO apps(id, secret, name, redirect_uris, auth_count, blocks_charged, billing, created_at) VALUES(?,?,?,?,0,0,'ok',?)", []string{id, tok_hash(secret), name, redirect, str(now())})
+    sqlite_close(db)
+    out_ok("{\"app_id\":\"" + id + "\",\"app_secret\":\"" + secret + "\"}")
+}
+
+func cmd_apps(a) {
+    db := need_db()
+    rows := sqlite_query(db, "SELECT id, name, redirect_uris, auth_count, blocks_charged, billing, created_at FROM apps ORDER BY created_at DESC LIMIT " + str(parse_int(opt(a, "-limit", "50"))), []string{})
+    sqlite_close(db)
+    out_ok(rows)
+}
+
+func cmd_stats() {
+    db := need_db()
+    rows := sqlite_query(db, "SELECT (SELECT COUNT(*) FROM apps) AS apps, (SELECT COALESCE(SUM(auth_count),0) FROM apps) AS auths, (SELECT COALESCE(SUM(blocks_charged),0) FROM apps) AS blocks_billed, (SELECT COUNT(*) FROM providers) AS providers", []string{})
+    sqlite_close(db)
+    out_ok(rows)
+}

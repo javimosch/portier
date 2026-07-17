@@ -1,0 +1,31 @@
+// HTTP routing. TLS terminates at the proxy.
+
+func handle(req) (res) {
+    p := pathof(req)
+    if p == "/_health" { res = ok_json("{\"ok\":1,\"version\":\"" + app_version() + "\"}")  return }
+    if has_prefix(p, "/auth/") { res = handle_auth_start(req)  return }
+    if has_prefix(p, "/cb/") { res = handle_callback(req)  return }
+    if req.method == "POST" && p == "/v1/apps/provider" { res = handle_app_provider(req)  return }
+    if req.method == "POST" && p == "/v1/apps/wallet" { res = handle_app_wallet(req)  return }
+    if req.method == "POST" && p == "/v1/apps" { res = handle_app_create(req)  return }
+    if req.method == "GET" && p == "/v1/apps/me" { res = handle_app_status(req)  return }
+    if req.method == "POST" && p == "/v1/token" { res = handle_token(req)  return }
+    if p == "/llms.txt" { res = ok_text(llms_txt(public_url(req)))  return }
+    if p == "/guide" { res = ok_json(guide_json(public_url(req)))  return }
+    if p == "/" { res = ok_html(landing_html())  return }
+    res = not_found()
+}
+
+func run_server(port) {
+    db := db_open()
+    db_migrate(db)
+    sqlite_close(db)
+    set_trust_proxy(1)
+    set_secure_cookies(1)
+    set_access_log(1)
+    set_max_body(65536)
+    set_read_timeout(15000)
+    if env("PORTIER_SECRET") == "" { write(2, "{\"warn\":\"PORTIER_SECRET not set — login state signed with a dev secret\"}\n") }
+    write(2, "{\"event\":\"listening\",\"port\":" + str(port) + "}\n")
+    serve(port, func(req) { return handle(req) })
+}

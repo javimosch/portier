@@ -1,0 +1,134 @@
+// SQLite persistence for portier. One short-lived handle per operation.
+
+func db_path() (p) {
+    p = env("PORTIER_DB")
+    if p == "" { p = env("HOME") + "/.portier/data.db" }
+}
+
+func db_open() (db) {
+    p := db_path()
+    i := len(p) - 1
+    while i > 0 && substr(p, i, i + 1) != "/" { i = i - 1 }
+    if i > 0 { system("mkdir -p " + substr(p, 0, i)) }
+    db = sqlite_open(p)
+    if db == 0 { return }
+    sqlite_exec(db, "PRAGMA journal_mode=WAL")
+    sqlite_exec(db, "PRAGMA busy_timeout=5000")
+}
+
+func db_migrate(db) {
+    // apps = relying applications. wallet_token is a peage wallet the app funds;
+    // stored to charge per-100-auths (sensitive — encrypt-at-rest is a follow-up).
+    sqlite_exec(db, "CREATE TABLE IF NOT EXISTS apps(id TEXT PRIMARY KEY, secret TEXT, name TEXT DEFAULT '', redirect_uris TEXT DEFAULT '', wallet_token TEXT DEFAULT '', auth_count INTEGER DEFAULT 0, blocks_charged INTEGER DEFAULT 0, billing TEXT DEFAULT 'ok', created_at INTEGER)")
+    sqlite_exec(db, "CREATE TABLE IF NOT EXISTS providers(app_id TEXT, name TEXT, kind TEXT, client_id TEXT, client_secret TEXT, authorize_url TEXT, token_url TEXT, userinfo_url TEXT, scope TEXT, PRIMARY KEY(app_id, name))")
+    // one-time codes the app exchanges for the verified identity
+    sqlite_exec(db, "CREATE TABLE IF NOT EXISTS codes(code TEXT PRIMARY KEY, app_id TEXT, identity TEXT, expires_at INTEGER)")
+    sqlite_exec(db, "CREATE TABLE IF NOT EXISTS ratelimit(k TEXT PRIMARY KEY, win INTEGER, n INTEGER)")
+}
+
+// ---- helpers ----
+
+func unq(s) (out) {
+    out = s
+    if len(s) >= 2 && has_prefix(s, "\"") && has_suffix(s, "\"") {
+        out = substr(s, 1, len(s) - 1)
+    }
+}
+
+func newid() (id) { id = to_hex(rand_bytes(16)) }
+func tok_hash(t) (h) { h = sha256(t) }
+
+func signing_secret() (s) {
+    s = env("PORTIER_SECRET")
+    if s == "" { s = "dev-secret-not-for-production" }
+}
+
+func public_url(req) (u) {
+    u = env("PORTIER_PUBLIC_URL")
+    if u == "" { u = base_url(req) }
+}
+
+func free_auths() (n) {
+    n = parse_int(env("PORTIER_FREE_AUTHS"))
+    if env("PORTIER_FREE_AUTHS") == "" { n = 100 }
+}
+
+func rate_allow(db, key, secs, max) (allowed) {
+    win := now() / secs
+    sqlite_exec(db, "INSERT INTO ratelimit(k, win, n) VALUES(?,?,1) ON CONFLICT(k) DO UPDATE SET n = CASE WHEN win = " + str(win) + " THEN n + 1 ELSE 1 END, win = " + str(win), []string{key, str(win)})
+    rows := sqlite_query(db, "SELECT n FROM ratelimit WHERE k = ?", []string{key})
+    v, _ := json_get(rows, "[0].n")
+    allowed = parse_int(v) <= max
+}
+
+func bearer_token(req) (t) {
+    t = header(req, "authorization")
+    if has_prefix(to_lower(t), "bearer ") { t = trim(substr(t, 7, len(t))) } else { t = "" }
+}
+
+func pathof(req) (p) {
+    parts := split(req.path, "?")
+    p = parts[0]
+}
+
+// ---- rows ----
+
+type AppRow struct {
+    id            string
+    name          string
+    redirect_uris string
+    wallet_token  string
+    auth_count    int
+    blocks_charged int
+    billing       string
+    created_at    int
+}
+
+func app_cols() (c) {
+    c = "id, COALESCE(name,'') AS name, COALESCE(redirect_uris,'') AS redirect_uris, COALESCE(wallet_token,'') AS wallet_token, COALESCE(auth_count,0) AS auth_count, COALESCE(blocks_charged,0) AS blocks_charged, COALESCE(billing,'ok') AS billing, created_at"
+}
+
+func app_by_id(db, id) (a, ok) {
+    ok = 0
+    rows := sqlite_query(db, "SELECT " + app_cols() + " FROM apps WHERE id = ?", []string{id})
+    list := parse(rows, []AppRow{})
+    if len(list) > 0 { a = list[0]  ok = 1 }
+}
+
+// app authenticated by its secret (for the management + token-exchange APIs)
+func app_by_secret(db, req) (a, ok) {
+    ok = 0
+    t := bearer_token(req)
+    if len(t) < 16 { return }
+    rows := sqlite_query(db, "SELECT " + app_cols() + " FROM apps WHERE secret = ?", []string{tok_hash(t)})
+    list := parse(rows, []AppRow{})
+    if len(list) > 0 { a = list[0]  ok = 1 }
+}
+
+type ProviderRow struct {
+    name          string
+    kind          string
+    client_id     string
+    client_secret string
+    authorize_url string
+    token_url     string
+    userinfo_url  string
+    scope         string
+}
+
+func provider_cols() (c) {
+    c = "name, kind, COALESCE(client_id,'') AS client_id, COALESCE(client_secret,'') AS client_secret, COALESCE(authorize_url,'') AS authorize_url, COALESCE(token_url,'') AS token_url, COALESCE(userinfo_url,'') AS userinfo_url, COALESCE(scope,'') AS scope"
+}
+
+type CodeRow struct {
+    app_id     string
+    identity   string
+    expires_at int
+}
+
+func provider_by(db, app_id, name) (p, ok) {
+    ok = 0
+    rows := sqlite_query(db, "SELECT " + provider_cols() + " FROM providers WHERE app_id = ? AND name = ?", []string{app_id, name})
+    list := parse(rows, []ProviderRow{})
+    if len(list) > 0 { p = list[0]  ok = 1 }
+}
