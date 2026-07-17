@@ -1,6 +1,6 @@
 // portier — CLI entry point and command routing.
 
-func app_version() (v) { v = "0.1.0" }
+func app_version() (v) { v = "0.1.1" }
 
 func resolve_port(a) (port) {
     p := opt(a, "-port", env("PORT"))
