@@ -23,6 +23,35 @@ func need_db() (db) {
     migrate_encrypt_wallets(db)
 }
 
+// feedback — dual-write to portier's own /v1/feedback and the central relay (machin-feedback).
+// Best-effort; never fails the caller. PORTIER_URL / PORTIER_PUBLIC_URL retarget the app
+// endpoint; FEEDBACK_RELAY retargets (or "off" disables) the relay.
+func fb_post(url, payload) (ok) {
+    ok = 0
+    status, _, err := http_request("POST", url, []string{"content-type: application/json"}, payload)
+    if err == "" && status >= 200 && status < 300 { ok = 1 }
+}
+
+func cmd_feedback(a) {
+    if len(a) < 3 || a[2] == "" { fail(80, "usage: portier feedback \"<message>\" [-kind bug|idea|praise] [-context \"...\"]") }
+    msg := a[2]
+    kind := opt(a, "-kind", "note")
+    ctx := opt(a, "-context", "")
+    reporter := env("USER")
+    if reporter == "" { reporter = "agent" }
+    id := newid()
+    payload := "{\"app\":\"portier\",\"version\":" + json(app_version()) + ",\"kind\":" + json(kind) + ",\"message\":" + json(msg) + ",\"context\":" + json(ctx) + ",\"reporter\":" + json(reporter) + ",\"id\":" + json(id) + "}"
+    app := env("PORTIER_URL")
+    if app == "" { app = env("PORTIER_PUBLIC_URL") }
+    if app == "" { app = "https://sso.intrane.fr" }
+    stored := fb_post(app + "/v1/feedback", payload)
+    relay := env("FEEDBACK_RELAY")
+    if relay == "" { relay = "https://feedback.intrane.fr" }
+    relayed := 0
+    if relay != "off" { relayed = fb_post(relay + "/v1/feedback", payload) }
+    out_ok("{\"id\":" + json(id) + ",\"stored\":" + str(stored) + ",\"relayed\":" + str(relayed) + "}")
+}
+
 func cmd_app_new(a) {
     redirect := opt(a, "-redirect", "")
     if redirect == "" { fail(80, "usage: app-new -name x -redirect https://myapp/cb") }

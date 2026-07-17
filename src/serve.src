@@ -10,10 +10,34 @@ func handle(req) (res) {
     if req.method == "POST" && p == "/v1/apps" { res = handle_app_create(req)  return }
     if req.method == "GET" && p == "/v1/apps/me" { res = handle_app_status(req)  return }
     if req.method == "POST" && p == "/v1/token" { res = handle_token(req)  return }
+    if req.method == "POST" && p == "/v1/feedback" { res = handle_feedback(req)  return }
     if p == "/llms.txt" { res = ok_text(llms_txt(public_url(req)))  return }
     if p == "/guide" { res = ok_json(guide_json(public_url(req)))  return }
     if p == "/" { res = ok_html(landing_html())  return }
     res = not_found()
+}
+
+// open feedback intake — stores locally; the `portier feedback` CLI also best-effort
+// mirrors to the central relay. Size-capped, message required, idempotent on client id.
+func handle_feedback(req) (res) {
+    if len(req.body) > 16384 { res = response("413 Payload Too Large", "application/json", "{\"ok\":0,\"error\":\"feedback too large\"}")  return }
+    mv, merr := json_get(req.body, ".message")
+    msg := ""
+    if merr == "" { msg = trim(unq(mv)) }
+    if msg == "" { res = bad_request("{\"ok\":0,\"error\":\"message required\"}")  return }
+    db := db_open()
+    if db == 0 { res = response("500 Internal Server Error", "application/json", "{\"ok\":0,\"error\":\"db\"}")  return }
+    db_migrate(db)
+    idv, _ := json_get(req.body, ".id")
+    id := unq(idv)
+    if id == "" { id = newid() }
+    kv, _ := json_get(req.body, ".kind")
+    cv, _ := json_get(req.body, ".context")
+    rv, _ := json_get(req.body, ".reporter")
+    vv, _ := json_get(req.body, ".version")
+    sqlite_exec(db, "INSERT OR IGNORE INTO feedback(id, kind, message, context, reporter, version, created, ip) VALUES(?,?,?,?,?,?,?,?)", []string{id, unq(kv), msg, unq(cv), unq(rv), unq(vv), str(now()), client_ip(req)})
+    sqlite_close(db)
+    res = ok_json("{\"ok\":true,\"id\":\"" + id + "\",\"stored\":true}")
 }
 
 func run_server(port) {
