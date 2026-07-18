@@ -107,6 +107,26 @@ func handle_app_provider(req) (res) {
     res = ok_json("{\"ok\":1,\"app_id\":\"" + a.id + "\",\"provider\":\"" + name + "\",\"kind\":\"" + kind + "\",\"idp_redirect_uri\":\"" + public_url(req) + "/cb/" + name + "\",\"login_url\":\"" + public_url(req) + "/auth/" + a.id + "/" + name + "\"}")
 }
 
+// DELETE /v1/apps/provider  {name}  (or ?name=) — remove a provider from the calling app.
+// App-authenticated (Bearer app_secret), like POST. 404 if the app has no such provider.
+func handle_app_provider_delete(req) (res) {
+    db := db_open()
+    if db == 0 { res = response("500 Internal Server Error", "application/json", "{\"ok\":0,\"error\":\"db\"}")  return }
+    a, ok := app_by_secret(db, req)
+    if ok == 0 { sqlite_close(db)  res = response("401 Unauthorized", "application/json", "{\"ok\":0,\"error\":\"unknown app secret\"}")  return }
+    nmv, nmerr := json_get(req.body, ".name")
+    name := ""
+    if nmerr == "" { name = unq(nmv) }
+    if name == "" { name = query(req, "name") }
+    if name == "" { sqlite_close(db)  res = bad_request("{\"ok\":0,\"error\":\"provider name required (JSON {\\\"name\\\":\\\"...\\\"} or ?name=)\"}")  return }
+    rows := sqlite_query(db, "SELECT name FROM providers WHERE app_id = ? AND name = ?", []string{a.id, name})
+    _, e := json_get(rows, "[0].name")
+    if e != "" { sqlite_close(db)  res = response("404 Not Found", "application/json", "{\"ok\":0,\"error\":\"no such provider: " + name + "\"}")  return }
+    sqlite_exec(db, "DELETE FROM providers WHERE app_id = ? AND name = ?", []string{a.id, name})
+    sqlite_close(db)
+    res = ok_json("{\"ok\":1,\"app_id\":\"" + a.id + "\",\"removed\":\"" + name + "\"}")
+}
+
 func handle_app_status(req) (res) {
     db := db_open()
     if db == 0 { res = response("500 Internal Server Error", "application/json", "{\"ok\":0,\"error\":\"db\"}")  return }

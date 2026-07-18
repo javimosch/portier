@@ -6,6 +6,7 @@ func handle(req) (res) {
     if has_prefix(p, "/auth/") { res = handle_auth_start(req)  return }
     if has_prefix(p, "/cb/") { res = handle_callback(req)  return }
     if req.method == "POST" && p == "/v1/apps/provider" { res = handle_app_provider(req)  return }
+    if req.method == "DELETE" && p == "/v1/apps/provider" { res = handle_app_provider_delete(req)  return }
     if req.method == "POST" && p == "/v1/apps/wallet" { res = handle_app_wallet(req)  return }
     if req.method == "POST" && p == "/v1/apps" { res = handle_app_create(req)  return }
     if req.method == "GET" && p == "/v1/apps/me" { res = handle_app_status(req)  return }

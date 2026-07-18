@@ -29,6 +29,7 @@ func llms_txt(base) (t) {
         "## Endpoints\n\n" +
         "POST /v1/apps {name, redirect_uris}                    -> {app_id, app_secret}\n" +
         "POST /v1/apps/provider   Bearer secret                 -> configure github|google|oidc|demo\n" +
+        "DELETE /v1/apps/provider Bearer secret {name}          -> remove a provider from the app\n" +
         "POST /v1/apps/wallet     Bearer secret {wallet_token}  -> set the peage billing wallet\n" +
         "GET  /v1/apps/me         Bearer secret                 -> auth_count, free tier, billing status\n" +
         "GET  /auth/<app_id>/<provider>?redirect_uri=&state=    -> start a login (browser)\n" +
@@ -51,6 +52,7 @@ func guide_json(base) (j) {
         "\"endpoints\":[" +
         "{\"method\":\"POST\",\"path\":\"/v1/apps\",\"body\":{\"name\":\"optional\",\"redirect_uris\":\"required, comma-separated\"}}," +
         "{\"method\":\"POST\",\"path\":\"/v1/apps/provider\",\"auth\":\"Bearer app secret\",\"body\":{\"kind\":\"github|google|oidc|demo\",\"client_id\":\"..\",\"client_secret\":\"..\"}}," +
+        "{\"method\":\"DELETE\",\"path\":\"/v1/apps/provider\",\"auth\":\"Bearer app secret\",\"body\":{\"name\":\"provider name to remove\"}}," +
         "{\"method\":\"POST\",\"path\":\"/v1/apps/wallet\",\"auth\":\"Bearer app secret\",\"body\":{\"wallet_token\":\"pw_..\"}}," +
         "{\"method\":\"GET\",\"path\":\"/v1/apps/me\",\"auth\":\"Bearer app secret\"}," +
         "{\"method\":\"GET\",\"path\":\"/auth/<app_id>/<provider>\",\"query\":\"redirect_uri, state\"}," +
