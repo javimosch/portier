@@ -64,5 +64,17 @@ code flow, no RSA needed).
 Env: `PORTIER_DB` · `PORTIER_PUBLIC_URL` · `PORTIER_SECRET` (state signing) ·
 `PORTIER_FREE_AUTHS` (100) · `PORTIER_BLOCK` (100) · `PEAGE_MERCHANT_KEY` · `PEAGE_URL`.
 
+## Feedback
+
+```sh
+portier feedback "wallet top-up wasn't reflected for ~30s" -kind bug -context "after POST /v1/apps/wallet"
+```
+
+Dual-writes: to portier's own `POST /v1/feedback` (stored locally) **and**, best-effort, to a
+central relay so one inbox spans every intrane CLI. Open intake — no token, 16 KB cap,
+idempotent on a client-supplied id. `FEEDBACK_RELAY` retargets the relay (`off` disables);
+`PORTIER_URL`/`PORTIER_PUBLIC_URL` retarget the app endpoint. Follows the
+[machin-feedback](https://github.com/javimosch/machin-feedback) convention.
+
 The intrane agent-web triad: **[péage](https://peage.intrane.fr)** (pay) ·
 **[relais](https://github.com/javimosch/relais)** (receive) · **portier** (authenticate).
