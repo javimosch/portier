@@ -73,7 +73,7 @@ portier feedback "wallet top-up wasn't reflected for ~30s" -kind bug -context "a
 Dual-writes: to portier's own `POST /v1/feedback` (stored locally) **and**, best-effort, to a
 central relay so one inbox spans every intrane CLI. Open intake — no token, 16 KB cap,
 idempotent on a client-supplied id. `FEEDBACK_RELAY` retargets the relay (`off` disables);
-`PORTIER_URL`/`PORTIER_PUBLIC_URL` retarget the app endpoint. Follows the [feedback-spec](https://github.com/javimosch/feedback-spec) convention
+`PORTIER_URL`/`PORTIER_PUBLIC_URL` retarget the app endpoint. Follows the [cli-feedback-spec](https://github.com/javimosch/cli-feedback-spec) convention
 (reference relay: [machin-feedback](https://github.com/javimosch/machin-feedback)).
 
 The intrane agent-web triad: **[péage](https://peage.intrane.fr)** (pay) ·
