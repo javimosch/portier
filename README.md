@@ -52,10 +52,12 @@ succeeds only when peage returns HTTP 200 with `{"ok":1}` — anything else flag
 ## Security
 
 Authorization-code flow only; login state is HMAC-signed and expiring (CSRF-safe);
-`redirect_uri` must exactly match a registered one (open-redirect guard); the portier
-code is one-time, short-lived, and only redeemable with the app secret — identities never
-touch the browser URL. v1 trusts the IdP token endpoint over TLS (confidential-client
-code flow, no RSA needed).
+`redirect_uri` must exactly match a registered one (open-redirect guard); the signed
+state binds the provider name — the IdP callback path `/cb/<provider>` must match;
+IdP error redirects (`?error=…`) are handled without attempting token exchange; the
+portier code is one-time, short-lived, and only redeemable with the app secret —
+identities never touch the browser URL. v1 trusts the IdP token endpoint over TLS
+(confidential-client code flow, no RSA needed).
 
 ## Build & run
 

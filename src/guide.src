@@ -41,6 +41,9 @@ func llms_txt(base) (t) {
         "- v1 supports OIDC/OAuth (github, google, machin-idp/intrane, generic OIDC). SAML is on the roadmap\n" +
         "  (needs RSA/XML-DSig — tracked in machin#484).\n" +
         "- redirect_uri must exactly match a registered one (open-redirect protection).\n" +
+        "- Signed login state binds app_id, provider, redirect_uri, and expiry — the /cb/<provider>\n" +
+        "  path must match the provider name in state (prevents IdP swapping).\n" +
+        "- IdP error redirects (?error=…) are surfaced without attempting a token exchange.\n" +
         "- The portier code is one-time and short-lived; identities are never put in the\n" +
         "  browser URL — only the code, exchanged server-side with your secret.\n" +
         "- Billing: first " + str(free_auths()) + " auths free, then 1 EUR per " + str(block_size()) + " successful auths\n" +
@@ -58,6 +61,7 @@ func guide_json(base) (j) {
         "\"providers\":[\"github\",\"google\",\"intrane\",\"oidc\",\"demo\"]," +
         "\"flow\":[\"POST /v1/apps -> app_id + secret\",\"POST /v1/apps/provider -> configure IdP\",\"POST /v1/apps/wallet -> peage wallet (required past free tier)\",\"send user to /auth/<app_id>/<provider>?redirect_uri=&state=\",\"receive ?code= at your redirect_uri\",\"POST /v1/token {code} -> identity\"]," +
         "\"billing\":{\"free_auths\":" + str(free_auths()) + ",\"block_size\":" + str(block_size()) + ",\"price_cents_per_block\":" + str(block_charge_cents()) + ",\"pay_rail\":\"peage\",\"past_due_blocks_new_logins\":true,\"in_flight_never_blocked\":true,\"idempotency_key\":\"app_id:block:N\",\"charge_success_requires\":\"HTTP 200 with non-empty JSON body and ok:1\"}," +
+        "\"security\":{\"state_binds_provider\":true,\"idp_error_redirect_handled\":true}," +
         "\"endpoints\":[" +
         "{\"method\":\"POST\",\"path\":\"/v1/apps\",\"body\":{\"name\":\"optional\",\"redirect_uris\":\"required, comma-separated\"}}," +
         "{\"method\":\"POST\",\"path\":\"/v1/apps/provider\",\"auth\":\"Bearer app secret\",\"body\":{\"kind\":\"github|google|intrane|oidc|demo\",\"client_id\":\"..\",\"client_secret\":\"..\"}}," +
