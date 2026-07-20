@@ -47,7 +47,9 @@ func llms_txt(base) (t) {
         "  (peage wallet via POST /v1/apps/wallet). Metering never interrupts an in-flight login;\n" +
         "  a declined charge or missing wallet flags billing=past_due, which blocks NEW login\n" +
         "  initiations once the free tier is exhausted (fund the wallet to clear past_due).\n" +
-        "  Peage charges use idempotency_key app_id:block:N (N = 1-based block number).\n"
+        "  Peage charges use idempotency_key app_id:block:N (N = 1-based block number).\n" +
+        "  A charge succeeds only when peage returns HTTP 200 with {\"ok\":1} — anything else\n" +
+        "  (402, 200+ok:0, network error) flags past_due without interrupting the in-flight login.\n"
 }
 
 func guide_json(base) (j) {

@@ -143,6 +143,10 @@ L=$(curl -s -o /dev/null -w '%{redirect_url}' "$B/auth/$AID/demo?redirect_uri=ht
 
 # --- metering: free tier = 2, wallet set, 3rd+ auths bill in blocks (mock charges 100c) ---
 curl -sf -X POST "$B/v1/apps/wallet" -H "Authorization: Bearer $SEC" -d '{"wallet_token":"pw_fundedwallet123"}' | grep -q '"billing_wallet":"set"' || fail wallet; ok "billing wallet set"
+# registered alternate redirect_uri works (after wallet — extra auths past free tier need billing)
+LOCalt=$(curl -s -o /dev/null -w '%{redirect_url}' "$B/auth/$AID/demo?redirect_uri=http%3A%2F%2F127.0.0.1%3A9999%2Fdone2&state=alt")
+CBalt=$(curl -s -o /dev/null -w '%{redirect_url}' "$LOCalt")
+echo "$CBalt" | grep -q "127.0.0.1:9999/done2?code=pc_" || fail alt-redir; ok "second registered redirect_uri accepted"
 
 # --- github normalize_identity: userinfo id/login (not sub) -> identity.sub ---
 sqlite3_retry "$DB" "UPDATE providers SET authorize_url='http://127.0.0.1:$IDP_PORT/authorize', token_url='http://127.0.0.1:$IDP_PORT/token', userinfo_url='http://127.0.0.1:$IDP_PORT/github-userinfo' WHERE app_id='$AID' AND name='github';"
@@ -153,6 +157,26 @@ PCgh=$(echo "$CBgh" | sed -n 's/.*code=\(pc_[a-f0-9]*\).*/\1/p')
 IDgh=$(curl -sf -X POST "$B/v1/token" -H "Authorization: Bearer $SEC" -d '{"code":"'$PCgh'"}')
 [ "$(echo "$IDgh" | J "['identity']['sub']")" = "4242" ] || fail gh-sub; ok "github userinfo id maps to identity.sub"
 [ "$(echo "$IDgh" | J "['identity']['name']")" = "octocat" ] || fail gh-name; ok "github userinfo login used when name absent"
+
+# --- google OIDC flow through mock IdP (preset uses generic sub/email/name) ---
+sqlite3_retry "$DB" "UPDATE providers SET authorize_url='http://127.0.0.1:$IDP_PORT/authorize', token_url='http://127.0.0.1:$IDP_PORT/token', userinfo_url='http://127.0.0.1:$IDP_PORT/userinfo' WHERE app_id='$AID' AND name='google';"
+LOCgo=$(curl -s -o /dev/null -w '%{redirect_url}' "$B/auth/$AID/google?redirect_uri=http%3A%2F%2F127.0.0.1%3A9999%2Fdone&state=go1")
+STgo=$(echo "$LOCgo" | sed -n 's/.*state=\([^&]*\).*/\1/p')
+CBgo=$(curl -s -o /dev/null -w '%{redirect_url}' "$B/cb/google?code=gocode&state=$STgo")
+PCgo=$(echo "$CBgo" | sed -n 's/.*code=\(pc_[a-f0-9]*\).*/\1/p')
+IDgo=$(curl -sf -X POST "$B/v1/token" -H "Authorization: Bearer $SEC" -d '{"code":"'$PCgo'"}')
+[ "$(echo "$IDgo" | J "['identity']['sub']")" = "oidc-sub-9" ] || fail google-sub; ok "google OIDC flow yields userinfo sub"
+[ "$(echo "$IDgo" | J "['identity']['email']")" = "user@corp.com" ] || fail google-email; ok "google OIDC flow yields userinfo email"
+
+# --- intrane (machin-idp) OIDC flow through mock IdP ---
+sqlite3_retry "$DB" "UPDATE providers SET authorize_url='http://127.0.0.1:$IDP_PORT/authorize', token_url='http://127.0.0.1:$IDP_PORT/token', userinfo_url='http://127.0.0.1:$IDP_PORT/userinfo' WHERE app_id='$AID' AND name='intrane';"
+LOCin=$(curl -s -o /dev/null -w '%{redirect_url}' "$B/auth/$AID/intrane?redirect_uri=http%3A%2F%2F127.0.0.1%3A9999%2Fdone&state=in1")
+STin=$(echo "$LOCin" | sed -n 's/.*state=\([^&]*\).*/\1/p')
+CBin=$(curl -s -o /dev/null -w '%{redirect_url}' "$B/cb/intrane?code=incode&state=$STin")
+PCin=$(echo "$CBin" | sed -n 's/.*code=\(pc_[a-f0-9]*\).*/\1/p')
+IDin=$(curl -sf -X POST "$B/v1/token" -H "Authorization: Bearer $SEC" -d '{"code":"'$PCin'"}')
+[ "$(echo "$IDin" | J "['identity']['provider']")" = "intrane" ] || fail intrane-prov; ok "intrane OIDC flow returns provider name"
+[ "$(echo "$IDin" | J "['identity']['sub']")" = "oidc-sub-9" ] || fail intrane-sub; ok "intrane OIDC flow yields userinfo sub"
 
 # the wallet token is encrypted at rest (not plaintext in the DB)
 RAW=$(sqlite3_retry "$DB" "SELECT wallet_token FROM apps WHERE id='$AID';")
@@ -209,6 +233,34 @@ sleep 0.2
 sqlite3_retry "$DB" "UPDATE apps SET billing='ok', auth_count=3, blocks_charged=0 WHERE id='$AID';"
 oneauth
 [ "$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC" | J "['billing']")" = "past_due" ] || fail decline-pastdue; ok "peage charge decline sets past_due"
+
+# --- billing: peage HTTP 200 but ok:0 in body -> past_due (not counted as billed) ---
+kill $PEAGE 2>/dev/null || true
+python3 - <<'PY' &
+import http.server, json
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self,*a): pass
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get('content-length',0)))
+        b=json.dumps({"ok":0,"error":"declined silently"}).encode()
+        self.send_response(200); self.send_header('content-type','application/json')
+        self.send_header('content-length',str(len(b))); self.end_headers(); self.wfile.write(b)
+http.server.HTTPServer(('127.0.0.1',18799),H).serve_forever()
+PY
+PEAGE=$!
+sleep 0.2
+sqlite3_retry "$DB" "UPDATE apps SET billing='ok', auth_count=3, blocks_charged=0 WHERE id='$AID';"
+oneauth
+[ "$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC" | J "['billing']")" = "past_due" ] || fail ok0-pastdue; ok "peage 200 with ok:0 sets past_due"
+[ "$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC" | J "['blocks_charged']")" = "0" ] || fail ok0-nocharge; ok "peage 200 with ok:0 does not increment blocks_charged"
+
+# --- billing: in-flight login completes even when charge fails in callback ---
+sqlite3_retry "$DB" "UPDATE apps SET billing='ok', auth_count=3, blocks_charged=0 WHERE id='$AID';"
+Lif=$(curl -s -o /dev/null -w '%{redirect_url}' "$B/auth/$AID/demo?redirect_uri=http%3A%2F%2F127.0.0.1%3A9999%2Fdone&state=if")
+CBif=$(curl -s -o /dev/null -w '%{redirect_url}' "$Lif")
+echo "$CBif" | grep -q "127.0.0.1:9999/done?code=pc_" || fail inflight-code; ok "in-flight login completes when peage charge fails"
+[ "$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC" | J "['billing']")" = "past_due" ] || fail inflight-pastdue; ok "charge failure during callback sets past_due after login completes"
+
 # restore working peage mock for any follow-on
 kill $PEAGE 2>/dev/null || true
 python3 - <<'PY' &

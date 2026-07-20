@@ -35,8 +35,13 @@ func charge_block(db, app_id, a) (charged) {
     idem := app_id + ":block:" + str(a.blocks_charged + 1)
     cents := block_charge_cents()
     body := "{\"wallet_token\":" + json(wtok) + ",\"amount_cents\":" + str(cents) + ",\"memo\":\"portier " + str(block_size()) + " SSO auths\",\"idempotency_key\":" + json(idem) + "}"
-    status, _, herr := http_request("POST", peage_url() + "/v1/charge", []string{"content-type: application/json", "authorization: Bearer " + key}, body)
+    status, resp, herr := http_request("POST", peage_url() + "/v1/charge", []string{"content-type: application/json", "authorization: Bearer " + key}, body)
+    ok := 0
     if herr == "" && status == 200 {
+        okv, okerr := json_get(resp, ".ok")
+        if okerr == "" && unq(okv) == "1" { ok = 1 }
+    }
+    if ok == 1 {
         sqlite_exec(db, "UPDATE apps SET blocks_charged = blocks_charged + 1, billing = 'ok' WHERE id = ?", []string{app_id})
         write(2, "{\"event\":\"metered\",\"app\":\"" + app_id + "\",\"block\":" + str(a.blocks_charged + 1) + ",\"cents\":" + str(cents) + "}\n")
         charged = 1

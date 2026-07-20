@@ -45,8 +45,9 @@ lacks ([machin#484](https://github.com/javimosch/machin/issues/484)).
 
 100 free auths, then 1 EUR per 100 **successful** auths, charged in blocks to the app's
 peage wallet (`POST /v1/apps/wallet`). Metering never interrupts an in-flight login; a
-depleted wallet only blocks *new* login initiations (the app owner's cue to fund). Set
-`PORTIER_FREE_AUTHS` / `PORTIER_BLOCK` to tune.
+depleted wallet only blocks *new* login initiations (the app owner's cue to fund). A charge
+succeeds only when peage returns HTTP 200 with `{"ok":1}` — anything else flags
+`past_due`. Set `PORTIER_FREE_AUTHS` / `PORTIER_BLOCK` to tune.
 
 ## Security
 
