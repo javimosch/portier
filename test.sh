@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # End-to-end: app register, provider config, full SSO code flow (demo + a mocked
-# real OIDC provider), open-redirect + state-tamper guards, peage metering. No
+# real OIDC provider), open-redirect + state-tamper guards, peage metering/past_due. No
 # browser — curl follows the redirects.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -58,6 +58,7 @@ B="http://127.0.0.1:$PORT"
 curl -sf "$B/_health" | grep -q '"ok":1' || fail health; ok health
 curl -sf "$B/llms.txt" | grep -q "one redirect" || fail llms; ok llms.txt
 curl -sf "$B/guide" | grep -q '"pay_rail":"peage"' || fail guide; ok guide
+curl -sf "$B/guide" | grep -q '"past_due_blocks_new_logins":true' || fail guide-billing; ok "guide documents past_due billing"
 curl -sf "$B/" | grep -q portier || fail landing; ok landing
 
 # register app (redirect_uri required)
@@ -68,6 +69,11 @@ AID=$(echo "$APP" | J "['app_id']"); SEC=$(echo "$APP" | J "['app_secret']")
 
 # provider: demo (no creds needed)
 curl -sf -X POST "$B/v1/apps/provider" -H "Authorization: Bearer $SEC" -d '{"kind":"demo"}' | grep -q '"kind":"demo"' || fail demo-prov; ok "demo provider configured"
+# provider: github preset (URLs filled in server-side)
+GH=$(curl -sf -X POST "$B/v1/apps/provider" -H "Authorization: Bearer $SEC" -d '{"kind":"github","client_id":"ghcid","client_secret":"ghsec"}')
+echo "$GH" | grep -q '/cb/github' || fail gh-cb; ok "github IdP callback URL in response"
+GHAUTH=$(sqlite3 "$DB" "SELECT authorize_url FROM providers WHERE app_id='$AID' AND name='github';")
+echo "$GHAUTH" | grep -q 'github.com/login/oauth/authorize' || fail gh-preset; ok "github provider preset authorize_url stored"
 # provider: a mocked real OIDC (points token/userinfo at the mock IdP)
 curl -sf -X POST "$B/v1/apps/provider" -H "Authorization: Bearer $SEC" -d '{"name":"corp","kind":"oidc","client_id":"cid","client_secret":"csec","authorize_url":"http://127.0.0.1:'$IDP_PORT'/authorize","token_url":"http://127.0.0.1:'$IDP_PORT'/token","userinfo_url":"http://127.0.0.1:'$IDP_PORT'/userinfo"}' | grep -q '"provider":"corp"' || fail oidc-prov; ok "generic OIDC provider configured"
 
@@ -123,6 +129,52 @@ ME=$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC")
 [ "$(echo "$ME" | J "['auth_count']")" -ge 4 ] || fail meter-count; ok "auth_count advanced past free+block"
 [ "$(echo "$ME" | J "['blocks_charged']")" -ge 1 ] || fail meter-charge; ok "peage charge fired (blocks_charged>=1)"
 [ "$(echo "$ME" | J "['billing']")" = "ok" ] || fail meter-billing; ok "billing status ok after charge"
+
+# --- billing hardening: past_due blocks new logins; wallet top-up clears it ---
+sqlite3 "$DB" "UPDATE apps SET billing='past_due', auth_count=5 WHERE id='$AID';"
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$B/auth/$AID/demo?redirect_uri=http%3A%2F%2F127.0.0.1%3A9999%2Fdone&state=pd")" = "400" ] || fail pastdue-block; ok "past_due blocks new login initiation"
+curl -sf -X POST "$B/v1/apps/wallet" -H "Authorization: Bearer $SEC" -d '{"wallet_token":"pw_fundedwallet123"}' | grep -q '"billing_wallet":"set"' || fail pastdue-wallet; ok "wallet top-up clears past_due"
+[ "$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC" | J "['billing']")" = "ok" ] || fail pastdue-cleared; ok "billing ok after wallet top-up"
+LOCpd=$(curl -s -o /dev/null -w '%{redirect_url}' "$B/auth/$AID/demo?redirect_uri=http%3A%2F%2F127.0.0.1%3A9999%2Fdone&state=pd2")
+echo "$LOCpd" | grep -q "/cb/demo" || fail pastdue-unblock; ok "login works again after wallet top-up"
+
+# --- peage charge decline -> past_due (swap mock to 402) ---
+kill $PEAGE 2>/dev/null || true
+python3 - <<'PY' &
+import http.server, json
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self,*a): pass
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get('content-length',0)))
+        b=json.dumps({"ok":0,"error":"insufficient funds"}).encode()
+        self.send_response(402); self.send_header('content-type','application/json')
+        self.send_header('content-length',str(len(b))); self.end_headers(); self.wfile.write(b)
+http.server.HTTPServer(('127.0.0.1',18799),H).serve_forever()
+PY
+PEAGE=$!
+sleep 0.2
+sqlite3 "$DB" "UPDATE apps SET billing='ok', auth_count=3, blocks_charged=0 WHERE id='$AID';"
+oneauth
+[ "$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC" | J "['billing']")" = "past_due" ] || fail decline-pastdue; ok "peage charge decline sets past_due"
+# restore working peage mock for any follow-on
+kill $PEAGE 2>/dev/null || true
+python3 - <<'PY' &
+import http.server, json
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self,*a): pass
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get('content-length',0)))
+        b=json.dumps({"ok":1,"charge_id":"c_mock","receipt":"c_mock.deadbeef","amount_cents":100}).encode()
+        self.send_response(200); self.send_header('content-type','application/json')
+        self.send_header('content-length',str(len(b))); self.end_headers(); self.wfile.write(b)
+http.server.HTTPServer(('127.0.0.1',18799),H).serve_forever()
+PY
+PEAGE=$!
+sleep 0.2
+
+# --- provider delete ---
+curl -sf -X DELETE "$B/v1/apps/provider" -H "Authorization: Bearer $SEC" -d '{"name":"corp"}' | grep -q '"removed":"corp"' || fail prov-del; ok "DELETE /v1/apps/provider removes provider"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$B/v1/apps/provider" -H "Authorization: Bearer $SEC" -d '{"name":"nope"}')" = "404" ] || fail prov-del-404; ok "DELETE unknown provider -> 404"
 
 # operator CLI
 ./portier app-new -name ops -redirect https://x/y | grep -q '"ok":true' || fail cli-new; ok "cli app-new"
