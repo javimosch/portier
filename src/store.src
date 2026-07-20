@@ -18,7 +18,7 @@ func db_open() (db) {
 
 func db_migrate(db) {
     // apps = relying applications. wallet_token is a peage wallet the app funds;
-    // stored to charge per-100-auths (sensitive — encrypt-at-rest is a follow-up).
+    // encrypted at rest via wallet_encrypt (PORTIER_KEK) when set.
     sqlite_exec(db, "CREATE TABLE IF NOT EXISTS apps(id TEXT PRIMARY KEY, secret TEXT, name TEXT DEFAULT '', redirect_uris TEXT DEFAULT '', wallet_token TEXT DEFAULT '', auth_count INTEGER DEFAULT 0, blocks_charged INTEGER DEFAULT 0, billing TEXT DEFAULT 'ok', created_at INTEGER)")
     sqlite_exec(db, "CREATE TABLE IF NOT EXISTS providers(app_id TEXT, name TEXT, kind TEXT, client_id TEXT, client_secret TEXT, authorize_url TEXT, token_url TEXT, userinfo_url TEXT, scope TEXT, PRIMARY KEY(app_id, name))")
     // one-time codes the app exchanges for the verified identity

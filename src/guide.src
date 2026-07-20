@@ -46,7 +46,8 @@ func llms_txt(base) (t) {
         "- Billing: first " + str(free_auths()) + " auths free, then 1 EUR per " + str(block_size()) + " successful auths\n" +
         "  (peage wallet via POST /v1/apps/wallet). Metering never interrupts an in-flight login;\n" +
         "  a declined charge or missing wallet flags billing=past_due, which blocks NEW login\n" +
-        "  initiations once the free tier is exhausted (fund the wallet to clear past_due).\n"
+        "  initiations once the free tier is exhausted (fund the wallet to clear past_due).\n" +
+        "  Peage charges use idempotency_key app_id:block:N (N = 1-based block number).\n"
 }
 
 func guide_json(base) (j) {
@@ -54,7 +55,7 @@ func guide_json(base) (j) {
         "\"base_url\":" + json(base) + ",\"free_auths\":" + str(free_auths()) + ",\"price\":\"1 EUR per 100 successful auths\",\"pay_rail\":\"peage\",\"protocols\":[\"oidc\",\"oauth\"],\"saml\":\"roadmap (machin#484)\"," +
         "\"providers\":[\"github\",\"google\",\"intrane\",\"oidc\",\"demo\"]," +
         "\"flow\":[\"POST /v1/apps -> app_id + secret\",\"POST /v1/apps/provider -> configure IdP\",\"POST /v1/apps/wallet -> peage wallet (required past free tier)\",\"send user to /auth/<app_id>/<provider>?redirect_uri=&state=\",\"receive ?code= at your redirect_uri\",\"POST /v1/token {code} -> identity\"]," +
-        "\"billing\":{\"free_auths\":" + str(free_auths()) + ",\"block_size\":" + str(block_size()) + ",\"price_cents_per_block\":" + str(block_charge_cents()) + ",\"pay_rail\":\"peage\",\"past_due_blocks_new_logins\":true,\"in_flight_never_blocked\":true}," +
+        "\"billing\":{\"free_auths\":" + str(free_auths()) + ",\"block_size\":" + str(block_size()) + ",\"price_cents_per_block\":" + str(block_charge_cents()) + ",\"pay_rail\":\"peage\",\"past_due_blocks_new_logins\":true,\"in_flight_never_blocked\":true,\"idempotency_key\":\"app_id:block:N\"}," +
         "\"endpoints\":[" +
         "{\"method\":\"POST\",\"path\":\"/v1/apps\",\"body\":{\"name\":\"optional\",\"redirect_uris\":\"required, comma-separated\"}}," +
         "{\"method\":\"POST\",\"path\":\"/v1/apps/provider\",\"auth\":\"Bearer app secret\",\"body\":{\"kind\":\"github|google|intrane|oidc|demo\",\"client_id\":\"..\",\"client_secret\":\"..\"}}," +
