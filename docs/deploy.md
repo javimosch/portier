@@ -18,3 +18,19 @@ ssh dk1 'sudo install -m0755 /tmp/portier /opt/portier/portier && sudo systemctl
 Wallet tokens are AES-256-GCM encrypted at rest when `PORTIER_KEK` is set (64 hex chars =
 32-byte key). Startup migrates any legacy plaintext rows in place. Backed up: machin-vault
 target dk1-portier (db + env) on rbm21, restore drill passed.
+
+## Billing (peage)
+
+Metering runs in the IdP callback after a successful auth — it never interrupts the user
+mid-login. `charge_block` POSTs to peage `/v1/charge` with an idempotency key
+`app_id:block:N`; only HTTP 200 **and** `{"ok":1}` in the body counts as billed.
+
+| Symptom | Likely cause | Fix |
+|---------|--------------|-----|
+| New logins return 400 "billing wallet is empty" | `billing=past_due` and free tier exhausted | `POST /v1/apps/wallet` with a funded `pw_` token (clears past_due) |
+| `blocks_charged` lags `auth_count` after outage | Catch-up bills up to 20 owed blocks per callback | Fund wallet; next successful auth triggers catch-up |
+| Charge always past_due | Missing `PEAGE_MERCHANT_KEY` or empty wallet | Set env + app wallet |
+| In-flight login still completes when charge fails | By design — past_due blocks only **new** `/auth` | Owner funds wallet before users retry |
+
+Tune free tier / block size with `PORTIER_FREE_AUTHS` (default 100) and `PORTIER_BLOCK`
+(default 100 auths per 1 EUR block).
