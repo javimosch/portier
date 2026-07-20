@@ -37,7 +37,9 @@ func charge_block(db, app_id, a) (charged) {
     body := "{\"wallet_token\":" + json(wtok) + ",\"amount_cents\":" + str(cents) + ",\"memo\":\"portier " + str(block_size()) + " SSO auths\",\"idempotency_key\":" + json(idem) + "}"
     status, resp, herr := http_request("POST", peage_url() + "/v1/charge", []string{"content-type: application/json", "authorization: Bearer " + key}, body)
     ok := 0
-    if herr == "" && status == 200 {
+    // Only HTTP 200 with a non-empty JSON body and ok:1 counts as billed — anything
+    // else (402, 5xx, network error, empty/malformed body, 200+ok:0) flags past_due.
+    if herr == "" && status == 200 && resp != "" {
         okv, okerr := json_get(resp, ".ok")
         if okerr == "" && unq(okv) == "1" { ok = 1 }
     }
@@ -47,7 +49,15 @@ func charge_block(db, app_id, a) (charged) {
         charged = 1
     } else {
         sqlite_exec(db, "UPDATE apps SET billing = 'past_due' WHERE id = ?", []string{app_id})
-        write(2, "{\"warn\":\"portier charge declined\",\"app\":\"" + app_id + "\",\"status\":" + str(status) + "}\n")
+        if herr != "" {
+            write(2, "{\"warn\":\"portier charge unreachable\",\"app\":\"" + app_id + "\",\"error\":" + json(herr) + "}\n")
+        } else if status == 200 && resp == "" {
+            write(2, "{\"warn\":\"portier charge empty response\",\"app\":\"" + app_id + "\"}\n")
+        } else if status == 200 {
+            write(2, "{\"warn\":\"portier charge invalid response\",\"app\":\"" + app_id + "\"}\n")
+        } else {
+            write(2, "{\"warn\":\"portier charge declined\",\"app\":\"" + app_id + "\",\"status\":" + str(status) + "}\n")
+        }
     }
 }
 

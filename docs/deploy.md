@@ -30,6 +30,8 @@ mid-login. `charge_block` POSTs to peage `/v1/charge` with an idempotency key
 | New logins return 400 "billing wallet is empty" | `billing=past_due` and free tier exhausted | `POST /v1/apps/wallet` with a funded `pw_` token (clears past_due) |
 | `blocks_charged` lags `auth_count` after outage | Catch-up bills up to 20 owed blocks per callback | Fund wallet; next successful auth triggers catch-up |
 | Charge always past_due | Missing `PEAGE_MERCHANT_KEY` or empty wallet | Set env + app wallet |
+| Charge past_due after peage outage | Network error or peage 5xx — only HTTP 200 + `ok:1` bills | Restore peage; fund wallet; wallet POST clears past_due |
+| Charge past_due with HTTP 200 | Empty body, malformed JSON, or `ok:0` in response | Fix peage integration; inspect stderr `portier charge invalid/empty response` |
 | In-flight login still completes when charge fails | By design — past_due blocks only **new** `/auth` | Owner funds wallet before users retry |
 
 Tune free tier / block size with `PORTIER_FREE_AUTHS` (default 100) and `PORTIER_BLOCK`
