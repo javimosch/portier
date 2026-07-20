@@ -76,6 +76,7 @@ curl -sf "$B/llms.txt" | grep -q "one redirect" || fail llms; ok llms.txt
 curl -sf "$B/guide" | grep -q '"pay_rail":"peage"' || fail guide; ok guide
 curl -sf "$B/guide" | grep -q '"past_due_blocks_new_logins":true' || fail guide-billing; ok "guide documents past_due billing"
 curl -sf "$B/guide" | grep -q '"charge_success_requires"' || fail guide-charge-req; ok "guide documents peage charge validation"
+curl -sf "$B/guide" | grep -q '"state_binds_provider":true' || fail guide-security; ok "guide documents state/provider binding"
 curl -sf "$B/guide" | grep -q '"intrane"' || fail guide-intrane; ok "guide lists intrane provider"
 curl -sf "$B/" | grep -q portier || fail landing; ok landing
 
@@ -92,6 +93,10 @@ GH=$(curl -sf -X POST "$B/v1/apps/provider" -H "Authorization: Bearer $SEC" -d '
 echo "$GH" | grep -q '/cb/github' || fail gh-cb; ok "github IdP callback URL in response"
 GHAUTH=$(sqlite3_retry "$DB" "SELECT authorize_url FROM providers WHERE app_id='$AID' AND name='github';")
 echo "$GHAUTH" | grep -q 'github.com/login/oauth/authorize' || fail gh-preset; ok "github provider preset authorize_url stored"
+# provider upsert: re-POST same name updates credentials
+curl -sf -X POST "$B/v1/apps/provider" -H "Authorization: Bearer $SEC" -d '{"kind":"github","client_id":"ghcid2","client_secret":"ghsec2"}' | grep -q '"provider":"github"' || fail gh-upsert; ok "provider upsert updates existing provider"
+GHcid=$(sqlite3_retry "$DB" "SELECT client_id FROM providers WHERE app_id='$AID' AND name='github';")
+[ "$GHcid" = "ghcid2" ] || fail gh-upsert-id; ok "provider upsert persisted new client_id"
 # provider: google preset (URLs filled in server-side)
 curl -sf -X POST "$B/v1/apps/provider" -H "Authorization: Bearer $SEC" -d '{"kind":"google","client_id":"gocid","client_secret":"gosec"}' | grep -q '/cb/google' || fail google-cb; ok "google IdP callback URL in response"
 GOAUTH=$(sqlite3_retry "$DB" "SELECT authorize_url FROM providers WHERE app_id='$AID' AND name='google';")
@@ -138,6 +143,14 @@ ID2=$(curl -sf -X POST "$B/v1/token" -H "Authorization: Bearer $SEC" -d '{"code"
 [ "$(curl -s -o /dev/null -w '%{http_code}' "$B/auth/$AID/demo?redirect_uri=http%3A%2F%2Fevil.com%2Fx&state=x")" = "400" ] || fail openredir; ok "unregistered redirect_uri blocked (open-redirect guard)"
 # tampered state at /cb -> 400
 [ "$(curl -s -o /dev/null -w '%{http_code}' "$B/cb/demo?code=x&state=tampered.deadbeef")" = "400" ] || fail statetamper; ok "tampered state rejected"
+# provider in signed state must match /cb/<provider> path
+LOCpm=$(curl -s -o /dev/null -w '%{redirect_url}' "$B/auth/$AID/demo?redirect_uri=http%3A%2F%2F127.0.0.1%3A9999%2Fdone&state=pm")
+STpm=$(echo "$LOCpm" | sed -n 's/.*state=\([^&]*\).*/\1/p')
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$B/cb/github?code=x&state=$STpm")" = "400" ] || fail prov-mismatch; ok "provider mismatch between state and /cb path rejected"
+# IdP error redirect (?error=…) -> 400, no token exchange attempted
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$B/cb/demo?error=access_denied&error_description=user%20cancelled&state=$STpm")" = "400" ] || fail idp-error; ok "IdP error redirect handled without code exchange"
+# missing code at /cb (non-error) -> 400
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$B/cb/demo?state=$STpm")" = "400" ] || fail missing-code; ok "missing authorization code rejected at /cb"
 # expired signed state at /cb -> 400
 EXST=$(python3 -c "import base64,hmac,hashlib; s=b'test-secret'; p='$AID|demo|http://127.0.0.1:9999/done|x|1'; b=base64.b64encode(p.encode()).decode(); print(b+'.'+hmac.new(s,b.encode(),hashlib.sha256).hexdigest())")
 [ "$(curl -s -o /dev/null -w '%{http_code}' "$B/cb/demo?code=x&state=$EXST")" = "400" ] || fail stateexp; ok "expired login state rejected"

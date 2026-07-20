@@ -142,10 +142,23 @@ func handle_callback(req) (res) {
     parts := split(payload, "|")
     if len(parts) < 5 { res = html_error("bad state payload")  return }
     app_id := parts[0]
+    state_provider := parts[1]
     app_redirect := parts[2]
     app_state := parts[3]
     exp := parse_int(parts[4])
     if now() > exp { res = html_error("login expired — start again")  return }
+    // state is signed with the provider name — URL path must match (prevents swapping IdPs)
+    if state_provider != provider { res = html_error("provider mismatch — start login again")  return }
+    // IdP declined or errored (OAuth ?error=…&state=…)
+    idperr := query(req, "error")
+    if idperr != "" {
+        desc := query(req, "error_description")
+        msg := "login declined by the identity provider"
+        if desc != "" && len(desc) <= 200 { msg = msg + ": " + desc }
+        res = html_error(msg)
+        return
+    }
+    if code == "" { res = html_error("missing authorization code from the identity provider")  return }
 
     db := db_open()
     if db == 0 { res = html_error("db error")  return }
