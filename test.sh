@@ -30,6 +30,10 @@ class H(http.server.BaseHTTPRequestHandler):
         self.end_headers(); self.wfile.write(b)
     def do_POST(self):  # token endpoint
         self.rfile.read(int(self.headers.get('content-length',0)))
+        if self.path.startswith('/token-fail'):
+            self.send_response(401); self.send_header('content-type','application/json')
+            b=b'{"error":"invalid_client"}'; self.send_header('content-length',str(len(b)))
+            self.end_headers(); self.wfile.write(b); return
         self._j({"access_token":"AT_mock","token_type":"bearer"})
     def do_GET(self):   # userinfo
         if self.path.startswith('/github-userinfo'):
@@ -64,7 +68,7 @@ B="http://127.0.0.1:$PORT"
 # sqlite3 while portier holds WAL can briefly lock — retry instead of flaking
 sqlite3_retry() {
   local n=0
-  while [ $n -lt 8 ]; do
+  while [ $n -lt 12 ]; do
     if sqlite3 "$@" 2>/dev/null; then return 0; fi
     n=$((n+1)); sleep 0.05
   done
@@ -77,7 +81,8 @@ curl -sf "$B/guide" | grep -q '"pay_rail":"peage"' || fail guide; ok guide
 curl -sf "$B/guide" | grep -q '"past_due_blocks_new_logins":true' || fail guide-billing; ok "guide documents past_due billing"
 curl -sf "$B/guide" | grep -q '"charge_success_requires"' || fail guide-charge-req; ok "guide documents peage charge validation"
 curl -sf "$B/guide" | grep -q '"state_binds_provider":true' || fail guide-security; ok "guide documents state/provider binding"
-curl -sf "$B/guide" | grep -q '"intrane"' || fail guide-intrane; ok "guide lists intrane provider"
+curl -sf "$B/guide" | grep -q '"catch_up_stops_on_decline":true' || fail guide-catchup; ok "guide documents partial catch-up on decline"
+curl -sf "$B/guide" | grep -q '"idp_exchange_failure_not_metered":true' || fail guide-idpfail; ok "guide documents IdP exchange failure not metered"
 curl -sf "$B/" | grep -q portier || fail landing; ok landing
 
 # register app (redirect_uri required)
@@ -137,6 +142,15 @@ PC2=$(echo "$CB2" | sed -n 's/.*code=\(pc_[a-f0-9]*\).*/\1/p')
 ID2=$(curl -sf -X POST "$B/v1/token" -H "Authorization: Bearer $SEC" -d '{"code":"'$PC2'"}')
 [ "$(echo "$ID2" | J "['identity']['email']")" = "user@corp.com" ] || fail oidc-flow; ok "generic OIDC flow yields the IdP identity"
 [ "$(echo "$ID2" | J "['identity']['sub']")" = "oidc-sub-9" ] || fail oidc-sub; ok "identity sub from userinfo"
+
+# --- IdP token exchange failure: 400 at /cb, auth_count unchanged ---
+AUTH_BEFORE=$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC" | J "['auth_count']")
+curl -sf -X POST "$B/v1/apps/provider" -H "Authorization: Bearer $SEC" -d '{"name":"badtok","kind":"oidc","client_id":"x","client_secret":"y","authorize_url":"http://127.0.0.1:'$IDP_PORT'/authorize","token_url":"http://127.0.0.1:'$IDP_PORT'/token-fail","userinfo_url":"http://127.0.0.1:'$IDP_PORT'/userinfo"}' >/dev/null
+LOCbt=$(curl -s -o /dev/null -w '%{redirect_url}' "$B/auth/$AID/badtok?redirect_uri=http%3A%2F%2F127.0.0.1%3A9999%2Fdone&state=bt")
+STbt=$(echo "$LOCbt" | sed -n 's/.*state=\([^&]*\).*/\1/p')
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$B/cb/badtok?code=bad&state=$STbt")" = "400" ] || fail idp-tokfail; ok "IdP token exchange failure returns 400"
+curl -s "$B/cb/badtok?code=bad&state=$STbt" | grep -q "IdP exchange" || fail idp-tokfail-msg; ok "IdP exchange error surfaced to browser"
+[ "$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC" | J "['auth_count']")" = "$AUTH_BEFORE" ] || fail idp-tokfail-meter; ok "failed IdP exchange does not meter auth"
 
 # --- security guards ---
 # open redirect: unregistered redirect_uri -> 400
@@ -225,6 +239,51 @@ oneauth
 MEcatch=$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC")
 [ "$(echo "$MEcatch" | J "['blocks_charged']")" -ge 3 ] || fail multi-catchup; ok "meter_auth catches up multiple owed blocks in one callback"
 
+# --- billing: partial catch-up stops on first declined block ---
+kill $PEAGE 2>/dev/null || true
+python3 - <<'PY' &
+import http.server, json
+calls = 0
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self,*a): pass
+    def do_POST(self):
+        global calls
+        calls += 1
+        self.rfile.read(int(self.headers.get('content-length',0)))
+        if calls == 1:
+            b=json.dumps({"ok":1,"charge_id":"c_partial1","receipt":"c_partial1.deadbeef","amount_cents":100}).encode()
+            self.send_response(200); self.send_header('content-type','application/json')
+            self.send_header('content-length',str(len(b))); self.end_headers(); self.wfile.write(b)
+        else:
+            b=json.dumps({"ok":0,"error":"insufficient funds"}).encode()
+            self.send_response(200); self.send_header('content-type','application/json')
+            self.send_header('content-length',str(len(b))); self.end_headers(); self.wfile.write(b)
+http.server.HTTPServer(('127.0.0.1',18799),H).serve_forever()
+PY
+PEAGE=$!
+sleep 0.2
+sqlite3_retry "$DB" "UPDATE apps SET billing='ok', auth_count=5, blocks_charged=0 WHERE id='$AID';"
+oneauth
+MEpart=$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC")
+[ "$(echo "$MEpart" | J "['blocks_charged']")" = "1" ] || fail partial-charge; ok "partial catch-up bills first block then stops on decline"
+[ "$(echo "$MEpart" | J "['billing']")" = "past_due" ] || fail partial-pastdue; ok "partial catch-up decline sets past_due"
+
+# restore working peage mock
+kill $PEAGE 2>/dev/null || true
+python3 - <<'PY' &
+import http.server, json
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self,*a): pass
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get('content-length',0)))
+        b=json.dumps({"ok":1,"charge_id":"c_mock","receipt":"c_mock.deadbeef","amount_cents":100}).encode()
+        self.send_response(200); self.send_header('content-type','application/json')
+        self.send_header('content-length',str(len(b))); self.end_headers(); self.wfile.write(b)
+http.server.HTTPServer(('127.0.0.1',18799),H).serve_forever()
+PY
+PEAGE=$!
+sleep 0.2
+
 # --- billing hardening: past_due blocks new logins; wallet top-up clears it ---
 sqlite3_retry "$DB" "UPDATE apps SET billing='past_due', auth_count=5 WHERE id='$AID';"
 [ "$(curl -s -o /dev/null -w '%{http_code}' "$B/auth/$AID/demo?redirect_uri=http%3A%2F%2F127.0.0.1%3A9999%2Fdone&state=pd")" = "400" ] || fail pastdue-block; ok "past_due blocks new login initiation"
@@ -271,6 +330,45 @@ sqlite3_retry "$DB" "UPDATE apps SET billing='ok', auth_count=3, blocks_charged=
 oneauth
 [ "$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC" | J "['billing']")" = "past_due" ] || fail ok0-pastdue; ok "peage 200 with ok:0 sets past_due"
 [ "$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC" | J "['blocks_charged']")" = "0" ] || fail ok0-nocharge; ok "peage 200 with ok:0 does not increment blocks_charged"
+
+# --- billing: peage HTTP 200 with ok as JSON string "1" -> billed ---
+kill $PEAGE 2>/dev/null || true
+python3 - <<'PY' &
+import http.server, json
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self,*a): pass
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get('content-length',0)))
+        b=json.dumps({"ok":"1","charge_id":"c_str","receipt":"c_str.deadbeef","amount_cents":100}).encode()
+        self.send_response(200); self.send_header('content-type','application/json')
+        self.send_header('content-length',str(len(b))); self.end_headers(); self.wfile.write(b)
+http.server.HTTPServer(('127.0.0.1',18799),H).serve_forever()
+PY
+PEAGE=$!
+sleep 0.2
+sqlite3_retry "$DB" "UPDATE apps SET billing='ok', auth_count=3, blocks_charged=0 WHERE id='$AID';"
+oneauth
+[ "$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC" | J "['blocks_charged']")" = "1" ] || fail okstr-charge; ok "peage 200 with ok string \"1\" increments blocks_charged"
+[ "$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC" | J "['billing']")" = "ok" ] || fail okstr-billing; ok "peage 200 with ok string \"1\" keeps billing ok"
+
+# --- billing: peage HTTP 200 whitespace-only body -> past_due ---
+kill $PEAGE 2>/dev/null || true
+python3 - <<'PY' &
+import http.server
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self,*a): pass
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get('content-length',0)))
+        b=b'   \n  '
+        self.send_response(200); self.send_header('content-type','application/json')
+        self.send_header('content-length',str(len(b))); self.end_headers(); self.wfile.write(b)
+http.server.HTTPServer(('127.0.0.1',18799),H).serve_forever()
+PY
+PEAGE=$!
+sleep 0.2
+sqlite3_retry "$DB" "UPDATE apps SET billing='ok', auth_count=3, blocks_charged=0 WHERE id='$AID';"
+oneauth
+[ "$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC" | J "['billing']")" = "past_due" ] || fail peage-ws; ok "peage HTTP 200 whitespace body sets past_due"
 
 # --- billing: peage HTTP 500 -> past_due ---
 kill $PEAGE 2>/dev/null || true
