@@ -58,10 +58,11 @@ code flow, no RSA needed).
 
 ```sh
 ./build.sh     # -> ./portier
-./test.sh      # 25-assertion e2e (mocked IdP + peage), incl. the full SSO flow + metering
+./test.sh      # e2e (mocked IdP + peage), incl. full SSO flow + metering/past_due
 ```
 
 Env: `PORTIER_DB` · `PORTIER_PUBLIC_URL` · `PORTIER_SECRET` (state signing) ·
+`PORTIER_KEK` (64-hex AES key — encrypts peage wallet tokens at rest) ·
 `PORTIER_FREE_AUTHS` (100) · `PORTIER_BLOCK` (100) · `PEAGE_MERCHANT_KEY` · `PEAGE_URL`.
 
 ## Feedback
