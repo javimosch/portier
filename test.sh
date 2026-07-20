@@ -14,6 +14,10 @@ export PORTIER_FREE_AUTHS=2 PORTIER_BLOCK=2
 export PORTIER_KEK="00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
 export PEAGE_MERCHANT_KEY="pm_test" PEAGE_URL="http://127.0.0.1:$PEAGE_PORT"
 
+# stale listeners from a prior failed run can flake sqlite/provider checks
+fuser -k ${PORT}/tcp ${IDP_PORT}/tcp ${PEAGE_PORT}/tcp 2>/dev/null || true
+sleep 0.2
+
 # mock IdP: /authorize is not hit by tests (demo/oidc-mock short-circuit token+userinfo)
 # mock OIDC token + userinfo
 python3 - <<'PY' &
@@ -71,6 +75,7 @@ curl -sf "$B/_health" | grep -q '"ok":1' || fail health; ok health
 curl -sf "$B/llms.txt" | grep -q "one redirect" || fail llms; ok llms.txt
 curl -sf "$B/guide" | grep -q '"pay_rail":"peage"' || fail guide; ok guide
 curl -sf "$B/guide" | grep -q '"past_due_blocks_new_logins":true' || fail guide-billing; ok "guide documents past_due billing"
+curl -sf "$B/guide" | grep -q '"charge_success_requires"' || fail guide-charge-req; ok "guide documents peage charge validation"
 curl -sf "$B/guide" | grep -q '"intrane"' || fail guide-intrane; ok "guide lists intrane provider"
 curl -sf "$B/" | grep -q portier || fail landing; ok landing
 
@@ -253,6 +258,106 @@ sqlite3_retry "$DB" "UPDATE apps SET billing='ok', auth_count=3, blocks_charged=
 oneauth
 [ "$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC" | J "['billing']")" = "past_due" ] || fail ok0-pastdue; ok "peage 200 with ok:0 sets past_due"
 [ "$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC" | J "['blocks_charged']")" = "0" ] || fail ok0-nocharge; ok "peage 200 with ok:0 does not increment blocks_charged"
+
+# --- billing: peage HTTP 500 -> past_due ---
+kill $PEAGE 2>/dev/null || true
+python3 - <<'PY' &
+import http.server
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self,*a): pass
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get('content-length',0)))
+        self.send_response(500); self.send_header('content-length','0'); self.end_headers()
+http.server.HTTPServer(('127.0.0.1',18799),H).serve_forever()
+PY
+PEAGE=$!
+sleep 0.2
+sqlite3_retry "$DB" "UPDATE apps SET billing='ok', auth_count=3, blocks_charged=0 WHERE id='$AID';"
+oneauth
+[ "$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC" | J "['billing']")" = "past_due" ] || fail peage-500; ok "peage HTTP 500 sets past_due"
+
+# --- billing: peage HTTP 200 empty body -> past_due ---
+kill $PEAGE 2>/dev/null || true
+python3 - <<'PY' &
+import http.server
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self,*a): pass
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get('content-length',0)))
+        self.send_response(200); self.send_header('content-type','application/json')
+        self.send_header('content-length','0'); self.end_headers()
+http.server.HTTPServer(('127.0.0.1',18799),H).serve_forever()
+PY
+PEAGE=$!
+sleep 0.2
+sqlite3_retry "$DB" "UPDATE apps SET billing='ok', auth_count=3, blocks_charged=0 WHERE id='$AID';"
+oneauth
+[ "$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC" | J "['billing']")" = "past_due" ] || fail peage-empty; ok "peage HTTP 200 empty body sets past_due"
+
+# --- billing: peage HTTP 200 malformed JSON -> past_due ---
+kill $PEAGE 2>/dev/null || true
+python3 - <<'PY' &
+import http.server
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self,*a): pass
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get('content-length',0)))
+        b=b'not-json'
+        self.send_response(200); self.send_header('content-type','application/json')
+        self.send_header('content-length',str(len(b))); self.end_headers(); self.wfile.write(b)
+http.server.HTTPServer(('127.0.0.1',18799),H).serve_forever()
+PY
+PEAGE=$!
+sleep 0.2
+sqlite3_retry "$DB" "UPDATE apps SET billing='ok', auth_count=3, blocks_charged=0 WHERE id='$AID';"
+oneauth
+[ "$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC" | J "['billing']")" = "past_due" ] || fail peage-badjson; ok "peage HTTP 200 malformed JSON sets past_due"
+
+# --- billing: peage unreachable (no listener) -> past_due ---
+kill $PEAGE 2>/dev/null || true
+sleep 0.2
+sqlite3_retry "$DB" "UPDATE apps SET billing='ok', auth_count=3, blocks_charged=0 WHERE id='$AID';"
+oneauth
+[ "$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC" | J "['billing']")" = "past_due" ] || fail peage-down; ok "peage unreachable sets past_due"
+
+# --- billing: charge POST includes idempotency_key app_id:block:N ---
+LAST_CHARGE=$(mktemp)
+kill $PEAGE 2>/dev/null || true
+python3 - "$LAST_CHARGE" <<'PY' &
+import http.server, json, sys
+last = sys.argv[1]
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self,*a): pass
+    def do_POST(self):
+        n = int(self.headers.get('content-length',0))
+        open(last, 'w').write(self.rfile.read(n).decode())
+        b = json.dumps({"ok":1,"charge_id":"c_idem","receipt":"c_idem.deadbeef","amount_cents":100}).encode()
+        self.send_response(200); self.send_header('content-type','application/json')
+        self.send_header('content-length',str(len(b))); self.end_headers(); self.wfile.write(b)
+http.server.HTTPServer(('127.0.0.1',18799),H).serve_forever()
+PY
+PEAGE=$!
+sleep 0.2
+sqlite3_retry "$DB" "UPDATE apps SET billing='ok', auth_count=3, blocks_charged=0 WHERE id='$AID';"
+oneauth
+grep -q "${AID}:block:1" "$LAST_CHARGE" || fail idem-key; ok "peage charge uses idempotency_key app_id:block:N"
+rm -f "$LAST_CHARGE"
+
+# restore declining peage mock for in-flight failure test
+kill $PEAGE 2>/dev/null || true
+python3 - <<'PY' &
+import http.server, json
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self,*a): pass
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get('content-length',0)))
+        b=json.dumps({"ok":0,"error":"declined silently"}).encode()
+        self.send_response(200); self.send_header('content-type','application/json')
+        self.send_header('content-length',str(len(b))); self.end_headers(); self.wfile.write(b)
+http.server.HTTPServer(('127.0.0.1',18799),H).serve_forever()
+PY
+PEAGE=$!
+sleep 0.2
 
 # --- billing: in-flight login completes even when charge fails in callback ---
 sqlite3_retry "$DB" "UPDATE apps SET billing='ok', auth_count=3, blocks_charged=0 WHERE id='$AID';"
