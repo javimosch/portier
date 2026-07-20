@@ -19,6 +19,7 @@ curl -s -X POST https://sso.intrane.fr/v1/apps \
 curl -s -X POST https://sso.intrane.fr/v1/apps/provider \
   -H 'Authorization: Bearer psk_…' -d '{"kind":"demo"}'
 # real GitHub: {"kind":"github","client_id":"…","client_secret":"…"} (callback = https://sso.intrane.fr/cb/github)
+# machin-idp: {"kind":"intrane","client_id":"…","client_secret":"…"} (callback = https://sso.intrane.fr/cb/intrane)
 ```
 
 Then the login flow: send the user's browser to
@@ -35,7 +36,8 @@ curl -s -X POST https://sso.intrane.fr/v1/token \
 ## Providers
 
 **github**, **google**, generic **oidc** (Keycloak/Auth0/Okta/GitLab — supply
-`authorize_url`/`token_url`/`userinfo_url`), and a **demo** provider for curl-testing the
+`authorize_url`/`token_url`/`userinfo_url`), **intrane** (machin-idp preset — same as
+`kind:intrane`), and a **demo** provider for curl-testing the
 whole flow. And **[machin-idp](https://github.com/javimosch/machin-idp)** (`idp.intrane.fr`) — the intrane OIDC provider — gives your apps "Login with intrane" through the same broker. **SAML** is on the roadmap — it needs RSA + XML-DSig the pure-MFL runtime
 lacks ([machin#484](https://github.com/javimosch/machin/issues/484)).
 
