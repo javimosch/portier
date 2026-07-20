@@ -28,6 +28,9 @@ class H(http.server.BaseHTTPRequestHandler):
         self.rfile.read(int(self.headers.get('content-length',0)))
         self._j({"access_token":"AT_mock","token_type":"bearer"})
     def do_GET(self):   # userinfo
+        if self.path.startswith('/github-userinfo'):
+            self._j({"id":4242,"login":"octocat","email":"octo@github.com","name":None})
+            return
         self._j({"sub":"oidc-sub-9","email":"user@corp.com","name":"Real User"})
 http.server.HTTPServer(('127.0.0.1',18798),H).serve_forever()
 PY
@@ -54,6 +57,15 @@ J(){ python3 -c "import json,sys;d=json.load(sys.stdin);print(d$1)"; }
 fail(){ echo "FAIL: $1"; exit 1; }
 P=0; ok(){ P=$((P+1)); echo "ok $P - $1"; }
 B="http://127.0.0.1:$PORT"
+# sqlite3 while portier holds WAL can briefly lock — retry instead of flaking
+sqlite3_retry() {
+  local n=0
+  while [ $n -lt 8 ]; do
+    if sqlite3 "$@" 2>/dev/null; then return 0; fi
+    n=$((n+1)); sleep 0.05
+  done
+  sqlite3 "$@"
+}
 
 curl -sf "$B/_health" | grep -q '"ok":1' || fail health; ok health
 curl -sf "$B/llms.txt" | grep -q "one redirect" || fail llms; ok llms.txt
@@ -73,15 +85,15 @@ curl -sf -X POST "$B/v1/apps/provider" -H "Authorization: Bearer $SEC" -d '{"kin
 # provider: github preset (URLs filled in server-side)
 GH=$(curl -sf -X POST "$B/v1/apps/provider" -H "Authorization: Bearer $SEC" -d '{"kind":"github","client_id":"ghcid","client_secret":"ghsec"}')
 echo "$GH" | grep -q '/cb/github' || fail gh-cb; ok "github IdP callback URL in response"
-GHAUTH=$(sqlite3 "$DB" "SELECT authorize_url FROM providers WHERE app_id='$AID' AND name='github';")
+GHAUTH=$(sqlite3_retry "$DB" "SELECT authorize_url FROM providers WHERE app_id='$AID' AND name='github';")
 echo "$GHAUTH" | grep -q 'github.com/login/oauth/authorize' || fail gh-preset; ok "github provider preset authorize_url stored"
 # provider: google preset (URLs filled in server-side)
 curl -sf -X POST "$B/v1/apps/provider" -H "Authorization: Bearer $SEC" -d '{"kind":"google","client_id":"gocid","client_secret":"gosec"}' | grep -q '/cb/google' || fail google-cb; ok "google IdP callback URL in response"
-GOAUTH=$(sqlite3 "$DB" "SELECT authorize_url FROM providers WHERE app_id='$AID' AND name='google';")
+GOAUTH=$(sqlite3_retry "$DB" "SELECT authorize_url FROM providers WHERE app_id='$AID' AND name='google';")
 echo "$GOAUTH" | grep -q 'accounts.google.com/o/oauth2' || fail google-preset; ok "google provider preset authorize_url stored"
 # provider: intrane (machin-idp) preset
 curl -sf -X POST "$B/v1/apps/provider" -H "Authorization: Bearer $SEC" -d '{"kind":"intrane","client_id":"icid","client_secret":"isec"}' | grep -q '/cb/intrane' || fail intrane-cb; ok "intrane (machin-idp) callback URL in response"
-IAUTH=$(sqlite3 "$DB" "SELECT authorize_url FROM providers WHERE app_id='$AID' AND name='intrane';")
+IAUTH=$(sqlite3_retry "$DB" "SELECT authorize_url FROM providers WHERE app_id='$AID' AND name='intrane';")
 echo "$IAUTH" | grep -q 'idp.intrane.fr/authorize' || fail intrane-preset; ok "intrane provider preset authorize_url stored"
 # provider: a mocked real OIDC (points token/userinfo at the mock IdP)
 curl -sf -X POST "$B/v1/apps/provider" -H "Authorization: Bearer $SEC" -d '{"name":"corp","kind":"oidc","client_id":"cid","client_secret":"csec","authorize_url":"http://127.0.0.1:'$IDP_PORT'/authorize","token_url":"http://127.0.0.1:'$IDP_PORT'/token","userinfo_url":"http://127.0.0.1:'$IDP_PORT'/userinfo"}' | grep -q '"provider":"corp"' || fail oidc-prov; ok "generic OIDC provider configured"
@@ -99,6 +111,12 @@ ID=$(curl -sf -X POST "$B/v1/token" -H "Authorization: Bearer $SEC" -d '{"code":
 [ "$(echo "$ID" | J "['identity']['email']")" = "demo@portier" ] || fail token; ok "token exchange returns the identity"
 # code is one-time
 [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$B/v1/token" -H "Authorization: Bearer $SEC" -d '{"code":"'$PCODE'"}')" = "404" ] || fail onetime; ok "portier code is one-time"
+# expired portier code -> 410 Gone
+Lexp=$(curl -s -o /dev/null -w '%{redirect_url}' "$B/auth/$AID/demo?redirect_uri=http%3A%2F%2F127.0.0.1%3A9999%2Fdone&state=ex")
+CLexp=$(curl -s -o /dev/null -w '%{redirect_url}' "$Lexp")
+PCexp=$(echo "$CLexp" | sed -n 's/.*code=\(pc_[a-f0-9]*\).*/\1/p')
+sqlite3_retry "$DB" "UPDATE codes SET expires_at=1 WHERE code='$PCexp';"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$B/v1/token" -H "Authorization: Bearer $SEC" -d '{"code":"'$PCexp'"}')" = "410" ] || fail codeexp; ok "expired portier code returns 410 Gone"
 
 # --- real OIDC flow through the mock IdP (token + userinfo) ---
 LOC2=$(curl -s -o /dev/null -w '%{redirect_url}' "$B/auth/$AID/corp?redirect_uri=http%3A%2F%2F127.0.0.1%3A9999%2Fdone&state=s2")
@@ -115,6 +133,9 @@ ID2=$(curl -sf -X POST "$B/v1/token" -H "Authorization: Bearer $SEC" -d '{"code"
 [ "$(curl -s -o /dev/null -w '%{http_code}' "$B/auth/$AID/demo?redirect_uri=http%3A%2F%2Fevil.com%2Fx&state=x")" = "400" ] || fail openredir; ok "unregistered redirect_uri blocked (open-redirect guard)"
 # tampered state at /cb -> 400
 [ "$(curl -s -o /dev/null -w '%{http_code}' "$B/cb/demo?code=x&state=tampered.deadbeef")" = "400" ] || fail statetamper; ok "tampered state rejected"
+# expired signed state at /cb -> 400
+EXST=$(python3 -c "import base64,hmac,hashlib; s=b'test-secret'; p='$AID|demo|http://127.0.0.1:9999/done|x|1'; b=base64.b64encode(p.encode()).decode(); print(b+'.'+hmac.new(s,b.encode(),hashlib.sha256).hexdigest())")
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$B/cb/demo?code=x&state=$EXST")" = "400" ] || fail stateexp; ok "expired login state rejected"
 # code from app A not redeemable by app B
 APP2=$(curl -sf -X POST "$B/v1/apps" -d '{"redirect_uris":"http://127.0.0.1:9999/done"}'); SEC2=$(echo "$APP2" | J "['app_secret']")
 L=$(curl -s -o /dev/null -w '%{redirect_url}' "$B/auth/$AID/demo?redirect_uri=http%3A%2F%2F127.0.0.1%3A9999%2Fdone&state=z"); CL=$(curl -s -o /dev/null -w '%{redirect_url}' "$L"); PCX=$(echo "$CL" | sed -n 's/.*code=\(pc_[a-f0-9]*\).*/\1/p')
@@ -122,8 +143,19 @@ L=$(curl -s -o /dev/null -w '%{redirect_url}' "$B/auth/$AID/demo?redirect_uri=ht
 
 # --- metering: free tier = 2, wallet set, 3rd+ auths bill in blocks (mock charges 100c) ---
 curl -sf -X POST "$B/v1/apps/wallet" -H "Authorization: Bearer $SEC" -d '{"wallet_token":"pw_fundedwallet123"}' | grep -q '"billing_wallet":"set"' || fail wallet; ok "billing wallet set"
+
+# --- github normalize_identity: userinfo id/login (not sub) -> identity.sub ---
+sqlite3_retry "$DB" "UPDATE providers SET authorize_url='http://127.0.0.1:$IDP_PORT/authorize', token_url='http://127.0.0.1:$IDP_PORT/token', userinfo_url='http://127.0.0.1:$IDP_PORT/github-userinfo' WHERE app_id='$AID' AND name='github';"
+LOCgh=$(curl -s -o /dev/null -w '%{redirect_url}' "$B/auth/$AID/github?redirect_uri=http%3A%2F%2F127.0.0.1%3A9999%2Fdone&state=gh1")
+STgh=$(echo "$LOCgh" | sed -n 's/.*state=\([^&]*\).*/\1/p')
+CBgh=$(curl -s -o /dev/null -w '%{redirect_url}' "$B/cb/github?code=ghcode&state=$STgh")
+PCgh=$(echo "$CBgh" | sed -n 's/.*code=\(pc_[a-f0-9]*\).*/\1/p')
+IDgh=$(curl -sf -X POST "$B/v1/token" -H "Authorization: Bearer $SEC" -d '{"code":"'$PCgh'"}')
+[ "$(echo "$IDgh" | J "['identity']['sub']")" = "4242" ] || fail gh-sub; ok "github userinfo id maps to identity.sub"
+[ "$(echo "$IDgh" | J "['identity']['name']")" = "octocat" ] || fail gh-name; ok "github userinfo login used when name absent"
+
 # the wallet token is encrypted at rest (not plaintext in the DB)
-RAW=$(sqlite3 "$DB" "SELECT wallet_token FROM apps WHERE id='$AID';")
+RAW=$(sqlite3_retry "$DB" "SELECT wallet_token FROM apps WHERE id='$AID';")
 echo "$RAW" | grep -q '^enc:' || fail enc-prefix; ok "wallet_token stored AES-GCM encrypted (enc: prefix)"
 echo "$RAW" | grep -q 'pw_fundedwallet123' && fail enc-plaintext; ok "plaintext wallet token not in the DB"
 # metering: free=2, block=2. Drive demo auths until auth_count crosses free+block,
@@ -140,19 +172,19 @@ ME=$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC")
 [ "$(echo "$ME" | J "['billing']")" = "ok" ] || fail meter-billing; ok "billing status ok after charge"
 
 # --- billing: past_due within free tier still allows login ---
-sqlite3 "$DB" "UPDATE apps SET billing='past_due', auth_count=0 WHERE id='$AID';"
+sqlite3_retry "$DB" "UPDATE apps SET billing='past_due', auth_count=0 WHERE id='$AID';"
 LOCfree=$(curl -s -o /dev/null -w '%{redirect_url}' "$B/auth/$AID/demo?redirect_uri=http%3A%2F%2F127.0.0.1%3A9999%2Fdone&state=ft")
 echo "$LOCfree" | grep -q "/cb/demo" || fail pastdue-free; ok "past_due does not block login while free tier remains"
-sqlite3 "$DB" "UPDATE apps SET billing='ok' WHERE id='$AID';"
+sqlite3_retry "$DB" "UPDATE apps SET billing='ok' WHERE id='$AID';"
 
 # --- billing: multi-block catch-up in one callback ---
-sqlite3 "$DB" "UPDATE apps SET billing='ok', auth_count=8, blocks_charged=0 WHERE id='$AID';"
+sqlite3_retry "$DB" "UPDATE apps SET billing='ok', auth_count=8, blocks_charged=0 WHERE id='$AID';"
 oneauth
 MEcatch=$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC")
 [ "$(echo "$MEcatch" | J "['blocks_charged']")" -ge 3 ] || fail multi-catchup; ok "meter_auth catches up multiple owed blocks in one callback"
 
 # --- billing hardening: past_due blocks new logins; wallet top-up clears it ---
-sqlite3 "$DB" "UPDATE apps SET billing='past_due', auth_count=5 WHERE id='$AID';"
+sqlite3_retry "$DB" "UPDATE apps SET billing='past_due', auth_count=5 WHERE id='$AID';"
 [ "$(curl -s -o /dev/null -w '%{http_code}' "$B/auth/$AID/demo?redirect_uri=http%3A%2F%2F127.0.0.1%3A9999%2Fdone&state=pd")" = "400" ] || fail pastdue-block; ok "past_due blocks new login initiation"
 curl -sf -X POST "$B/v1/apps/wallet" -H "Authorization: Bearer $SEC" -d '{"wallet_token":"pw_fundedwallet123"}' | grep -q '"billing_wallet":"set"' || fail pastdue-wallet; ok "wallet top-up clears past_due"
 [ "$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC" | J "['billing']")" = "ok" ] || fail pastdue-cleared; ok "billing ok after wallet top-up"
@@ -174,7 +206,7 @@ http.server.HTTPServer(('127.0.0.1',18799),H).serve_forever()
 PY
 PEAGE=$!
 sleep 0.2
-sqlite3 "$DB" "UPDATE apps SET billing='ok', auth_count=3, blocks_charged=0 WHERE id='$AID';"
+sqlite3_retry "$DB" "UPDATE apps SET billing='ok', auth_count=3, blocks_charged=0 WHERE id='$AID';"
 oneauth
 [ "$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC" | J "['billing']")" = "past_due" ] || fail decline-pastdue; ok "peage charge decline sets past_due"
 # restore working peage mock for any follow-on
@@ -192,6 +224,36 @@ http.server.HTTPServer(('127.0.0.1',18799),H).serve_forever()
 PY
 PEAGE=$!
 sleep 0.2
+
+# --- billing: no wallet past free tier -> charge fails -> past_due blocks /auth ---
+NOWALLET=$(curl -sf -X POST "$B/v1/apps" -d '{"name":"nowallet","redirect_uris":"http://127.0.0.1:9999/done"}')
+NWID=$(echo "$NOWALLET" | J "['app_id']"); NWSEC=$(echo "$NOWALLET" | J "['app_secret']")
+curl -sf -X POST "$B/v1/apps/provider" -H "Authorization: Bearer $NWSEC" -d '{"kind":"demo"}' >/dev/null
+sqlite3_retry "$DB" "UPDATE apps SET auth_count=3, blocks_charged=0, billing='ok', wallet_token='' WHERE id='$NWID';"
+Lnw=$(curl -s -o /dev/null -w '%{redirect_url}' "$B/auth/$NWID/demo?redirect_uri=http%3A%2F%2F127.0.0.1%3A9999%2Fdone&state=nw")
+curl -s -o /dev/null "$Lnw"
+[ "$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $NWSEC" | J "['billing']")" = "past_due" ] || fail nowallet-pastdue; ok "missing wallet past free tier sets past_due"
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$B/auth/$NWID/demo?redirect_uri=http%3A%2F%2F127.0.0.1%3A9999%2Fdone&state=nw2")" = "400" ] || fail nowallet-block; ok "past_due without wallet blocks new login initiation"
+
+# --- billing: missing PEAGE_MERCHANT_KEY -> past_due on charge ---
+kill $SRV 2>/dev/null || true
+unset PEAGE_MERCHANT_KEY
+./portier serve -port $PORT 2>/dev/null &
+SRV=$!
+sleep 0.4
+sqlite3_retry "$DB" "UPDATE apps SET billing='ok', auth_count=3, blocks_charged=0 WHERE id='$AID';"
+oneauth
+[ "$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC" | J "['billing']")" = "past_due" ] || fail no-merchant; ok "missing PEAGE_MERCHANT_KEY sets past_due on charge"
+kill $SRV 2>/dev/null || true
+export PEAGE_MERCHANT_KEY="pm_test"
+./portier serve -port $PORT 2>/dev/null &
+SRV=$!
+sleep 0.4
+sqlite3_retry "$DB" "UPDATE apps SET billing='ok' WHERE id='$AID';"
+
+# --- feedback intake ---
+FB=$(curl -sf -X POST "$B/v1/feedback" -d '{"message":"e2e test feedback","kind":"test"}')
+echo "$FB" | grep -q '"stored":true' || fail feedback; ok "POST /v1/feedback stores feedback"
 
 # --- provider delete ---
 curl -sf -X DELETE "$B/v1/apps/provider" -H "Authorization: Bearer $SEC" -d '{"name":"corp"}' | grep -q '"removed":"corp"' || fail prov-del; ok "DELETE /v1/apps/provider removes provider"
