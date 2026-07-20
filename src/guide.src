@@ -14,7 +14,8 @@ func llms_txt(base) (t) {
         "   curl -s -X POST " + base + "/v1/apps/provider -H 'Authorization: Bearer psk_..' -d '{\"kind\":\"demo\"}'\n" +
         "   Real GitHub (make an OAuth app at github.com/settings/developers, callback = " + base + "/cb/github):\n" +
         "   curl -s -X POST " + base + "/v1/apps/provider -H 'Authorization: Bearer psk_..' -d '{\"kind\":\"github\",\"client_id\":\"..\",\"client_secret\":\"..\"}'\n" +
-        "   Google: {\"kind\":\"google\",...}. Any other OIDC: {\"kind\":\"oidc\",\"client_id\":..,\"client_secret\":..,\"authorize_url\":..,\"token_url\":..,\"userinfo_url\":..}\n" +
+        "   Google: {\"kind\":\"google\",...}. machin-idp (Login with intrane): {\"kind\":\"intrane\",...} (callback = " + base + "/cb/intrane)\n" +
+        "   Any other OIDC: {\"kind\":\"oidc\",\"client_id\":..,\"client_secret\":..,\"authorize_url\":..,\"token_url\":..,\"userinfo_url\":..}\n" +
         "3. Set a billing wallet (peage — funds the pay-per-auth past the free tier):\n" +
         "   curl -s -X POST " + base + "/v1/apps/wallet -H 'Authorization: Bearer psk_..' -d '{\"wallet_token\":\"pw_..\"}'\n" +
         "   No wallet? " + peage_url() + "/llms.txt\n\n" +
@@ -28,7 +29,7 @@ func llms_txt(base) (t) {
         "   -> {\"identity\":{\"sub\":\"..\",\"email\":\"..\",\"name\":\"..\",\"provider\":\"github\"}}\n\n" +
         "## Endpoints\n\n" +
         "POST /v1/apps {name, redirect_uris}                    -> {app_id, app_secret}\n" +
-        "POST /v1/apps/provider   Bearer secret                 -> configure github|google|oidc|demo\n" +
+        "POST /v1/apps/provider   Bearer secret                 -> configure github|google|intrane|oidc|demo\n" +
         "DELETE /v1/apps/provider Bearer secret {name}          -> remove a provider from the app\n" +
         "POST /v1/apps/wallet     Bearer secret {wallet_token}  -> set the peage billing wallet\n" +
         "GET  /v1/apps/me         Bearer secret                 -> auth_count, free tier, billing status\n" +
@@ -37,7 +38,7 @@ func llms_txt(base) (t) {
         "POST /v1/token           Bearer secret {code}          -> the verified identity (one-time)\n" +
         "GET  /_health\n\n" +
         "## Notes\n\n" +
-        "- v1 supports OIDC/OAuth (github, google, generic OIDC). SAML is on the roadmap\n" +
+        "- v1 supports OIDC/OAuth (github, google, machin-idp/intrane, generic OIDC). SAML is on the roadmap\n" +
         "  (needs RSA/XML-DSig — tracked in machin#484).\n" +
         "- redirect_uri must exactly match a registered one (open-redirect protection).\n" +
         "- The portier code is one-time and short-lived; identities are never put in the\n" +
@@ -51,12 +52,12 @@ func llms_txt(base) (t) {
 func guide_json(base) (j) {
     j = "{\"name\":\"portier\",\"version\":\"" + app_version() + "\",\"tagline\":\"SSO for your app in one redirect (OIDC/OAuth) — 100 free auths, then 1 EUR per 100 via peage\"," +
         "\"base_url\":" + json(base) + ",\"free_auths\":" + str(free_auths()) + ",\"price\":\"1 EUR per 100 successful auths\",\"pay_rail\":\"peage\",\"protocols\":[\"oidc\",\"oauth\"],\"saml\":\"roadmap (machin#484)\"," +
-        "\"providers\":[\"github\",\"google\",\"oidc\",\"demo\"]," +
+        "\"providers\":[\"github\",\"google\",\"intrane\",\"oidc\",\"demo\"]," +
         "\"flow\":[\"POST /v1/apps -> app_id + secret\",\"POST /v1/apps/provider -> configure IdP\",\"POST /v1/apps/wallet -> peage wallet (required past free tier)\",\"send user to /auth/<app_id>/<provider>?redirect_uri=&state=\",\"receive ?code= at your redirect_uri\",\"POST /v1/token {code} -> identity\"]," +
         "\"billing\":{\"free_auths\":" + str(free_auths()) + ",\"block_size\":" + str(block_size()) + ",\"price_cents_per_block\":" + str(block_charge_cents()) + ",\"pay_rail\":\"peage\",\"past_due_blocks_new_logins\":true,\"in_flight_never_blocked\":true}," +
         "\"endpoints\":[" +
         "{\"method\":\"POST\",\"path\":\"/v1/apps\",\"body\":{\"name\":\"optional\",\"redirect_uris\":\"required, comma-separated\"}}," +
-        "{\"method\":\"POST\",\"path\":\"/v1/apps/provider\",\"auth\":\"Bearer app secret\",\"body\":{\"kind\":\"github|google|oidc|demo\",\"client_id\":\"..\",\"client_secret\":\"..\"}}," +
+        "{\"method\":\"POST\",\"path\":\"/v1/apps/provider\",\"auth\":\"Bearer app secret\",\"body\":{\"kind\":\"github|google|intrane|oidc|demo\",\"client_id\":\"..\",\"client_secret\":\"..\"}}," +
         "{\"method\":\"DELETE\",\"path\":\"/v1/apps/provider\",\"auth\":\"Bearer app secret\",\"body\":{\"name\":\"provider name to remove\"}}," +
         "{\"method\":\"POST\",\"path\":\"/v1/apps/wallet\",\"auth\":\"Bearer app secret\",\"body\":{\"wallet_token\":\"pw_..\"}}," +
         "{\"method\":\"GET\",\"path\":\"/v1/apps/me\",\"auth\":\"Bearer app secret\"}," +

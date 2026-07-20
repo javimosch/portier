@@ -59,6 +59,7 @@ curl -sf "$B/_health" | grep -q '"ok":1' || fail health; ok health
 curl -sf "$B/llms.txt" | grep -q "one redirect" || fail llms; ok llms.txt
 curl -sf "$B/guide" | grep -q '"pay_rail":"peage"' || fail guide; ok guide
 curl -sf "$B/guide" | grep -q '"past_due_blocks_new_logins":true' || fail guide-billing; ok "guide documents past_due billing"
+curl -sf "$B/guide" | grep -q '"intrane"' || fail guide-intrane; ok "guide lists intrane provider"
 curl -sf "$B/" | grep -q portier || fail landing; ok landing
 
 # register app (redirect_uri required)
@@ -74,6 +75,14 @@ GH=$(curl -sf -X POST "$B/v1/apps/provider" -H "Authorization: Bearer $SEC" -d '
 echo "$GH" | grep -q '/cb/github' || fail gh-cb; ok "github IdP callback URL in response"
 GHAUTH=$(sqlite3 "$DB" "SELECT authorize_url FROM providers WHERE app_id='$AID' AND name='github';")
 echo "$GHAUTH" | grep -q 'github.com/login/oauth/authorize' || fail gh-preset; ok "github provider preset authorize_url stored"
+# provider: google preset (URLs filled in server-side)
+curl -sf -X POST "$B/v1/apps/provider" -H "Authorization: Bearer $SEC" -d '{"kind":"google","client_id":"gocid","client_secret":"gosec"}' | grep -q '/cb/google' || fail google-cb; ok "google IdP callback URL in response"
+GOAUTH=$(sqlite3 "$DB" "SELECT authorize_url FROM providers WHERE app_id='$AID' AND name='google';")
+echo "$GOAUTH" | grep -q 'accounts.google.com/o/oauth2' || fail google-preset; ok "google provider preset authorize_url stored"
+# provider: intrane (machin-idp) preset
+curl -sf -X POST "$B/v1/apps/provider" -H "Authorization: Bearer $SEC" -d '{"kind":"intrane","client_id":"icid","client_secret":"isec"}' | grep -q '/cb/intrane' || fail intrane-cb; ok "intrane (machin-idp) callback URL in response"
+IAUTH=$(sqlite3 "$DB" "SELECT authorize_url FROM providers WHERE app_id='$AID' AND name='intrane';")
+echo "$IAUTH" | grep -q 'idp.intrane.fr/authorize' || fail intrane-preset; ok "intrane provider preset authorize_url stored"
 # provider: a mocked real OIDC (points token/userinfo at the mock IdP)
 curl -sf -X POST "$B/v1/apps/provider" -H "Authorization: Bearer $SEC" -d '{"name":"corp","kind":"oidc","client_id":"cid","client_secret":"csec","authorize_url":"http://127.0.0.1:'$IDP_PORT'/authorize","token_url":"http://127.0.0.1:'$IDP_PORT'/token","userinfo_url":"http://127.0.0.1:'$IDP_PORT'/userinfo"}' | grep -q '"provider":"corp"' || fail oidc-prov; ok "generic OIDC provider configured"
 
@@ -129,6 +138,18 @@ ME=$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC")
 [ "$(echo "$ME" | J "['auth_count']")" -ge 4 ] || fail meter-count; ok "auth_count advanced past free+block"
 [ "$(echo "$ME" | J "['blocks_charged']")" -ge 1 ] || fail meter-charge; ok "peage charge fired (blocks_charged>=1)"
 [ "$(echo "$ME" | J "['billing']")" = "ok" ] || fail meter-billing; ok "billing status ok after charge"
+
+# --- billing: past_due within free tier still allows login ---
+sqlite3 "$DB" "UPDATE apps SET billing='past_due', auth_count=0 WHERE id='$AID';"
+LOCfree=$(curl -s -o /dev/null -w '%{redirect_url}' "$B/auth/$AID/demo?redirect_uri=http%3A%2F%2F127.0.0.1%3A9999%2Fdone&state=ft")
+echo "$LOCfree" | grep -q "/cb/demo" || fail pastdue-free; ok "past_due does not block login while free tier remains"
+sqlite3 "$DB" "UPDATE apps SET billing='ok' WHERE id='$AID';"
+
+# --- billing: multi-block catch-up in one callback ---
+sqlite3 "$DB" "UPDATE apps SET billing='ok', auth_count=8, blocks_charged=0 WHERE id='$AID';"
+oneauth
+MEcatch=$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC")
+[ "$(echo "$MEcatch" | J "['blocks_charged']")" -ge 3 ] || fail multi-catchup; ok "meter_auth catches up multiple owed blocks in one callback"
 
 # --- billing hardening: past_due blocks new logins; wallet top-up clears it ---
 sqlite3 "$DB" "UPDATE apps SET billing='past_due', auth_count=5 WHERE id='$AID';"
