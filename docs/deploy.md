@@ -33,6 +33,8 @@ mid-login. `charge_block` POSTs to peage `/v1/charge` with an idempotency key
 | Charge past_due after peage outage | Network error or peage 5xx — only HTTP 200 + `ok:1` bills | Restore peage; fund wallet; wallet POST clears past_due |
 | Charge past_due with HTTP 200 | Empty body, malformed JSON, or `ok:0` in response | Fix peage integration; inspect stderr `portier charge invalid/empty response` |
 | In-flight login still completes when charge fails | By design — past_due blocks only **new** `/auth` | Owner funds wallet before users retry |
+| `blocks_charged` stuck mid catch-up | Multi-block catch-up stops on first declined charge; earlier blocks stay billed | Fund wallet; wallet POST clears past_due; next auth retries remaining blocks |
+| `/cb` returns 400 "IdP exchange" | Token or userinfo call to the IdP failed | Check IdP credentials/endpoints; auth is **not** metered on exchange failure |
 
 Tune free tier / block size with `PORTIER_FREE_AUTHS` (default 100) and `PORTIER_BLOCK`
 (default 100 auths per 1 EUR block).

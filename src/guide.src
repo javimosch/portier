@@ -51,8 +51,11 @@ func llms_txt(base) (t) {
         "  a declined charge or missing wallet flags billing=past_due, which blocks NEW login\n" +
         "  initiations once the free tier is exhausted (fund the wallet to clear past_due).\n" +
         "  Peage charges use idempotency_key app_id:block:N (N = 1-based block number).\n" +
-        "  A charge succeeds only when peage returns HTTP 200 with {\"ok\":1} — anything else\n" +
-        "  (402, 200+ok:0, network error) flags past_due without interrupting the in-flight login.\n"
+        "  A charge succeeds only when peage returns HTTP 200 with a non-empty JSON body and ok:1\n" +
+        "  (string or number) — anything else (402, whitespace body, 200+ok:0, network error) flags\n" +
+        "  past_due without interrupting the in-flight login. Multi-block catch-up stops on the\n" +
+        "  first declined block (blocks already billed stay charged).\n" +
+        "- IdP token/userinfo exchange failures at /cb return 400 and do not meter the auth.\n"
 }
 
 func guide_json(base) (j) {
@@ -60,8 +63,8 @@ func guide_json(base) (j) {
         "\"base_url\":" + json(base) + ",\"free_auths\":" + str(free_auths()) + ",\"price\":\"1 EUR per 100 successful auths\",\"pay_rail\":\"peage\",\"protocols\":[\"oidc\",\"oauth\"],\"saml\":\"roadmap (machin#484)\"," +
         "\"providers\":[\"github\",\"google\",\"intrane\",\"oidc\",\"demo\"]," +
         "\"flow\":[\"POST /v1/apps -> app_id + secret\",\"POST /v1/apps/provider -> configure IdP\",\"POST /v1/apps/wallet -> peage wallet (required past free tier)\",\"send user to /auth/<app_id>/<provider>?redirect_uri=&state=\",\"receive ?code= at your redirect_uri\",\"POST /v1/token {code} -> identity\"]," +
-        "\"billing\":{\"free_auths\":" + str(free_auths()) + ",\"block_size\":" + str(block_size()) + ",\"price_cents_per_block\":" + str(block_charge_cents()) + ",\"pay_rail\":\"peage\",\"past_due_blocks_new_logins\":true,\"in_flight_never_blocked\":true,\"idempotency_key\":\"app_id:block:N\",\"charge_success_requires\":\"HTTP 200 with non-empty JSON body and ok:1\"}," +
-        "\"security\":{\"state_binds_provider\":true,\"idp_error_redirect_handled\":true}," +
+        "\"billing\":{\"free_auths\":" + str(free_auths()) + ",\"block_size\":" + str(block_size()) + ",\"price_cents_per_block\":" + str(block_charge_cents()) + ",\"pay_rail\":\"peage\",\"past_due_blocks_new_logins\":true,\"in_flight_never_blocked\":true,\"catch_up_stops_on_decline\":true,\"idempotency_key\":\"app_id:block:N\",\"charge_success_requires\":\"HTTP 200 with non-empty JSON body and ok:1 (string or number)\"}," +
+        "\"security\":{\"state_binds_provider\":true,\"idp_error_redirect_handled\":true,\"idp_exchange_failure_not_metered\":true}," +
         "\"endpoints\":[" +
         "{\"method\":\"POST\",\"path\":\"/v1/apps\",\"body\":{\"name\":\"optional\",\"redirect_uris\":\"required, comma-separated\"}}," +
         "{\"method\":\"POST\",\"path\":\"/v1/apps/provider\",\"auth\":\"Bearer app secret\",\"body\":{\"kind\":\"github|google|intrane|oidc|demo\",\"client_id\":\"..\",\"client_secret\":\"..\"}}," +
