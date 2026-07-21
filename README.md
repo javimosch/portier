@@ -22,7 +22,9 @@ curl -s -X POST https://portier.intrane.fr/v1/apps \
 curl -s -X POST https://portier.intrane.fr/v1/apps/provider \
   -H 'Authorization: Bearer psk_…' -d '{"kind":"demo"}'
 # real GitHub: {"kind":"github","client_id":"…","client_secret":"…"} (callback = https://portier.intrane.fr/cb/github)
+# machin-idp: {"kind":"intrane","client_id":"…","client_secret":"…"} (callback = https://portier.intrane.fr/cb/intrane)
 ```
+
 
 Then the login flow: send the user's browser to
 `https://portier.intrane.fr/auth/<app_id>/<provider>?redirect_uri=<registered>&state=<csrf>`.
@@ -38,33 +40,45 @@ curl -s -X POST https://portier.intrane.fr/v1/token \
 ## Providers
 
 **github**, **google**, generic **oidc** (Keycloak/Auth0/Okta/GitLab — supply
-`authorize_url`/`token_url`/`userinfo_url`), and a **demo** provider for curl-testing the
+`authorize_url`/`token_url`/`userinfo_url`), **intrane** (machin-idp preset — same as
+`kind:intrane`), and a **demo** provider for curl-testing the
 whole flow. And **[machin-idp](https://github.com/javimosch/machin-idp)** — OSS IdP; Intrane’s free hosted “Login with Intrane” is at **`idp.intrane.fr`** — same broker path as Google/GitHub. **SAML** is on the roadmap — it needs RSA + XML-DSig the pure-MFL runtime
 lacks ([machin#484](https://github.com/javimosch/machin/issues/484)).
+
 
 ## Billing (peage)
 
 100 free auths, then 1 EUR per 100 **successful** auths, charged in blocks to the app's
 peage wallet (`POST /v1/apps/wallet`). Metering never interrupts an in-flight login; a
-depleted wallet only blocks *new* login initiations (the app owner's cue to fund). Set
-`PORTIER_FREE_AUTHS` / `PORTIER_BLOCK` to tune.
+depleted wallet only blocks *new* login initiations (the app owner's cue to fund). A charge
+succeeds only when peage returns HTTP 200 with a non-empty JSON body and `ok:1` (number),
+`ok:"1"` (string), or `ok:true` — `ok:0`, `ok:false`, or a missing `ok` field flags `past_due`. Multi-block catch-up stops on the first declined
+charge (blocks already billed stay charged); at most 20 blocks are billed per callback.
+Set `PORTIER_FREE_AUTHS` / `PORTIER_BLOCK` to tune.
+
+App registration (`POST /v1/apps`) is rate-limited to 10 per hour per client IP.
+Wallet tokens must be at least 16 characters (`POST /v1/apps/wallet`).
 
 ## Security
 
 Authorization-code flow only; login state is HMAC-signed and expiring (CSRF-safe);
-`redirect_uri` must exactly match a registered one (open-redirect guard); the portier
-code is one-time, short-lived, and only redeemable with the app secret — identities never
-touch the browser URL. v1 trusts the IdP token endpoint over TLS (confidential-client
-code flow, no RSA needed).
+`redirect_uri` must exactly match a registered one (open-redirect guard); the signed
+state binds the provider name — the IdP callback path `/cb/<provider>` must match;
+IdP error redirects (`?error=…`) are handled without attempting token exchange; token or
+userinfo exchange failures return 400 without metering the auth; the
+portier code is one-time, short-lived, and only redeemable with the app secret —
+identities without a usable `sub` are rejected at `/cb` without metering. v1 trusts the IdP token endpoint over TLS
+(confidential-client code flow, no RSA needed).
 
 ## Build & run
 
 ```sh
 ./build.sh     # -> ./portier
-./test.sh      # 25-assertion e2e (mocked IdP + peage), incl. the full SSO flow + metering
+./test.sh      # e2e (mocked IdP + peage), incl. full SSO flow + metering/past_due
 ```
 
 Env: `PORTIER_DB` · `PORTIER_PUBLIC_URL` · `PORTIER_SECRET` (state signing) ·
+`PORTIER_KEK` (64-hex AES key — encrypts peage wallet tokens at rest) ·
 `PORTIER_FREE_AUTHS` (100) · `PORTIER_BLOCK` (100) · `PEAGE_MERCHANT_KEY` · `PEAGE_URL`.
 
 ## Feedback

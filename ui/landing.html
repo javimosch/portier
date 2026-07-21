@@ -35,7 +35,11 @@ curl -s -X POST https://portier.intrane.fr/v1/apps \
 curl -s -X POST https://portier.intrane.fr/v1/apps/provider \
   -H 'Authorization: Bearer psk_…' -d '{"kind":"demo"}'
 
-# 3. send the user to portier; get ?code= back at your redirect_uri; exchange it:
+# 3. set a billing wallet (peage — funds auths past the free tier)
+curl -s -X POST https://portier.intrane.fr/v1/apps/wallet \
+  -H 'Authorization: Bearer psk_…' -d '{"wallet_token":"pw_…"}'
+
+# 4. send the user to portier; get ?code= back at your redirect_uri; exchange it:
 curl -s -X POST https://portier.intrane.fr/v1/token \
   -H 'Authorization: Bearer psk_…' -d '{"code":"pc_…"}'
 # -&gt; {"identity":{"sub":"…","email":"…","name":"…","provider":"github"}}</pre>

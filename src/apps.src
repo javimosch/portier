@@ -59,6 +59,13 @@ func provider_preset(kind) (authorize, token, userinfo, scope) {
         scope = "openid email profile"
         return
     }
+    if kind == "intrane" {
+        authorize = "https://idp.intrane.fr/authorize"
+        token = "https://idp.intrane.fr/token"
+        userinfo = "https://idp.intrane.fr/userinfo"
+        scope = "openid email profile"
+        return
+    }
 }
 
 func handle_app_provider(req) (res) {
@@ -71,9 +78,9 @@ func handle_app_provider(req) (res) {
     name := unq(nmv)
     kind := unq(kdv)
     if nmerr != "" || name == "" { name = kind }
-    if kderr != "" || (kind != "github" && kind != "google" && kind != "oidc" && kind != "demo") {
+    if kderr != "" || (kind != "github" && kind != "google" && kind != "intrane" && kind != "oidc" && kind != "demo") {
         sqlite_close(db)
-        res = bad_request("{\"ok\":0,\"error\":\"kind must be one of: github, google, oidc (generic OIDC/OAuth), demo\"}")
+        res = bad_request("{\"ok\":0,\"error\":\"kind must be one of: github, google, intrane (machin-idp), oidc (generic OIDC/OAuth), demo\"}")
         return
     }
     ciov, _ := json_get(req.body, ".client_id")
