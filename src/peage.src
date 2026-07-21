@@ -23,6 +23,16 @@ func block_charge_cents() (c) {
     if c < 100 { c = 100 }
 }
 
+// peage_charge_accepted: HTTP 200 body must be non-empty JSON with ok truthy.
+// Accepts ok:1, ok:"1", and ok:true (peage may emit any of these).
+func peage_charge_accepted(resp) (ok) {
+    ok = 0
+    okv, okerr := json_get(resp, ".ok")
+    if okerr != "" { return }
+    v := to_lower(unq(okv))
+    if v == "1" || v == "true" { ok = 1 }
+}
+
 // charge_block bills one owed block to peage. Returns 1 on success, 0 on decline/misconfig.
 func charge_block(db, app_id, a) (charged) {
     charged = 0
@@ -38,11 +48,10 @@ func charge_block(db, app_id, a) (charged) {
     status, resp, herr := http_request("POST", peage_url() + "/v1/charge", []string{"content-type: application/json", "authorization: Bearer " + key}, body)
     ok := 0
     resp = trim(resp)
-    // Only HTTP 200 with a non-empty JSON body and ok:1 counts as billed — anything
-    // else (402, 5xx, network error, whitespace/empty/malformed body, 200+ok:0) flags past_due.
+    // Only HTTP 200 with a non-empty JSON body and ok:1/true counts as billed — anything
+    // else (402, 5xx, network error, whitespace/empty/malformed body, 200+ok:0/missing ok) flags past_due.
     if herr == "" && status == 200 && resp != "" {
-        okv, okerr := json_get(resp, ".ok")
-        if okerr == "" && unq(okv) == "1" { ok = 1 }
+        ok = peage_charge_accepted(resp)
     }
     if ok == 1 {
         sqlite_exec(db, "UPDATE apps SET blocks_charged = blocks_charged + 1, billing = 'ok' WHERE id = ?", []string{app_id})

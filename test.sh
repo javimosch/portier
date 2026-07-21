@@ -40,6 +40,9 @@ class H(http.server.BaseHTTPRequestHandler):
             self.send_response(401); self.send_header('content-type','application/json')
             b=b'{"error":"invalid_token"}'; self.send_header('content-length',str(len(b)))
             self.end_headers(); self.wfile.write(b); return
+        if self.path.startswith('/userinfo-nosub'):
+            self._j({"email":"nosub@corp.com","name":"No Sub User"})
+            return
         if self.path.startswith('/github-userinfo'):
             self._j({"id":4242,"login":"octocat","email":"octo@github.com","name":None})
             return
@@ -88,6 +91,7 @@ curl -sf "$B/guide" | grep -q '"state_binds_provider":true' || fail guide-securi
 curl -sf "$B/guide" | grep -q '"catch_up_stops_on_decline":true' || fail guide-catchup; ok "guide documents partial catch-up on decline"
 curl -sf "$B/guide" | grep -q '"catch_up_max_per_callback":20' || fail guide-catchup-cap; ok "guide documents catch-up loop cap"
 curl -sf "$B/guide" | grep -q '"idp_exchange_failure_not_metered":true' || fail guide-idpfail; ok "guide documents IdP exchange failure not metered"
+curl -sf "$B/guide" | grep -q '"empty_sub_rejected":true' || fail guide-nosub; ok "guide documents empty sub rejection"
 curl -sf "$B/" | grep -q portier || fail landing; ok landing
 
 # register app (redirect_uri required)
@@ -95,6 +99,10 @@ curl -sf "$B/" | grep -q portier || fail landing; ok landing
 APP=$(curl -sf -X POST "$B/v1/apps" -d '{"name":"testapp","redirect_uris":"http://127.0.0.1:9999/done,http://127.0.0.1:9999/done2"}')
 AID=$(echo "$APP" | J "['app_id']"); SEC=$(echo "$APP" | J "['app_secret']")
 [ -n "$SEC" ] || fail app; ok "app registered ($AID)"
+
+# --- /auth guards: unknown app or provider ---
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$B/auth/app_nonexistent/demo?redirect_uri=http%3A%2F%2F127.0.0.1%3A9999%2Fdone&state=x")" = "400" ] || fail auth-unknown-app; ok "unknown app_id rejected at /auth"
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$B/auth/$AID/nope?redirect_uri=http%3A%2F%2F127.0.0.1%3A9999%2Fdone&state=x")" = "400" ] || fail auth-unknown-prov; ok "unknown provider rejected at /auth"
 
 # --- provider validation ---
 [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$B/v1/apps/provider" -H "Authorization: Bearer $SEC" -d '{"kind":"saml"}')" = "400" ] || fail bad-kind; ok "invalid provider kind rejected"
@@ -138,6 +146,8 @@ ID=$(curl -sf -X POST "$B/v1/token" -H "Authorization: Bearer $SEC" -d '{"code":
 [ "$(echo "$ID" | J "['identity']['email']")" = "demo@portier" ] || fail token; ok "token exchange returns the identity"
 # code is one-time
 [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$B/v1/token" -H "Authorization: Bearer $SEC" -d '{"code":"'$PCODE'"}')" = "404" ] || fail onetime; ok "portier code is one-time"
+# token exchange requires app secret
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$B/v1/token" -d '{"code":"'$PCODE'"}')" = "401" ] || fail token-noauth; ok "token exchange requires Bearer app secret"
 # expired portier code -> 410 Gone
 Lexp=$(curl -s -o /dev/null -w '%{redirect_url}' "$B/auth/$AID/demo?redirect_uri=http%3A%2F%2F127.0.0.1%3A9999%2Fdone&state=ex")
 CLexp=$(curl -s -o /dev/null -w '%{redirect_url}' "$Lexp")
@@ -171,6 +181,14 @@ STui=$(echo "$LOCui" | sed -n 's/.*state=\([^&]*\).*/\1/p')
 [ "$(curl -s -o /dev/null -w '%{http_code}' "$B/cb/badui?code=bad&state=$STui")" = "400" ] || fail idp-uifail; ok "IdP userinfo failure returns 400"
 curl -s "$B/cb/badui?code=bad&state=$STui" | grep -q "userinfo" || fail idp-uifail-msg; ok "IdP userinfo error surfaced to browser"
 [ "$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC" | J "['auth_count']")" = "$AUTH_BEFORE" ] || fail idp-uifail-meter; ok "failed IdP userinfo does not meter auth"
+
+# --- IdP userinfo without sub: 400 at /cb, auth_count unchanged ---
+curl -sf -X POST "$B/v1/apps/provider" -H "Authorization: Bearer $SEC" -d '{"name":"nosub","kind":"oidc","client_id":"x","client_secret":"y","authorize_url":"http://127.0.0.1:'$IDP_PORT'/authorize","token_url":"http://127.0.0.1:'$IDP_PORT'/token","userinfo_url":"http://127.0.0.1:'$IDP_PORT'/userinfo-nosub"}' >/dev/null
+LOCns=$(curl -s -o /dev/null -w '%{redirect_url}' "$B/auth/$AID/nosub?redirect_uri=http%3A%2F%2F127.0.0.1%3A9999%2Fdone&state=ns")
+STns=$(echo "$LOCns" | sed -n 's/.*state=\([^&]*\).*/\1/p')
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$B/cb/nosub?code=bad&state=$STns")" = "400" ] || fail idp-nosub; ok "IdP userinfo without sub returns 400"
+curl -s "$B/cb/nosub?code=bad&state=$STns" | grep -q "user identifier" || fail idp-nosub-msg; ok "empty sub error surfaced to browser"
+[ "$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC" | J "['auth_count']")" = "$AUTH_BEFORE" ] || fail idp-nosub-meter; ok "empty sub does not meter auth"
 
 # --- security guards ---
 # open redirect: unregistered redirect_uri -> 400
@@ -385,6 +403,46 @@ sqlite3_retry "$DB" "UPDATE apps SET billing='ok', auth_count=3, blocks_charged=
 oneauth
 [ "$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC" | J "['blocks_charged']")" = "1" ] || fail okstr-charge; ok "peage 200 with ok string \"1\" increments blocks_charged"
 [ "$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC" | J "['billing']")" = "ok" ] || fail okstr-billing; ok "peage 200 with ok string \"1\" keeps billing ok"
+
+# --- billing: peage HTTP 200 with ok:true (boolean) -> billed ---
+kill $PEAGE 2>/dev/null || true
+python3 - <<'PY' &
+import http.server, json
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self,*a): pass
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get('content-length',0)))
+        b=json.dumps({"ok":True,"charge_id":"c_bool","receipt":"c_bool.deadbeef","amount_cents":100}).encode()
+        self.send_response(200); self.send_header('content-type','application/json')
+        self.send_header('content-length',str(len(b))); self.end_headers(); self.wfile.write(b)
+http.server.HTTPServer(('127.0.0.1',18799),H).serve_forever()
+PY
+PEAGE=$!
+sleep 0.2
+sqlite3_retry "$DB" "UPDATE apps SET billing='ok', auth_count=3, blocks_charged=0 WHERE id='$AID';"
+oneauth
+[ "$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC" | J "['blocks_charged']")" = "1" ] || fail okbool-charge; ok "peage 200 with ok:true increments blocks_charged"
+[ "$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC" | J "['billing']")" = "ok" ] || fail okbool-billing; ok "peage 200 with ok:true keeps billing ok"
+
+# --- billing: peage HTTP 200 with missing ok field -> past_due ---
+kill $PEAGE 2>/dev/null || true
+python3 - <<'PY' &
+import http.server, json
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self,*a): pass
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get('content-length',0)))
+        b=json.dumps({"charge_id":"c_nook","receipt":"c_nook.deadbeef","amount_cents":100}).encode()
+        self.send_response(200); self.send_header('content-type','application/json')
+        self.send_header('content-length',str(len(b))); self.end_headers(); self.wfile.write(b)
+http.server.HTTPServer(('127.0.0.1',18799),H).serve_forever()
+PY
+PEAGE=$!
+sleep 0.2
+sqlite3_retry "$DB" "UPDATE apps SET billing='ok', auth_count=3, blocks_charged=0 WHERE id='$AID';"
+oneauth
+[ "$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC" | J "['billing']")" = "past_due" ] || fail nook-pastdue; ok "peage 200 with missing ok sets past_due"
+[ "$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC" | J "['blocks_charged']")" = "0" ] || fail nook-nocharge; ok "peage 200 with missing ok does not increment blocks_charged"
 
 # --- billing: peage HTTP 200 whitespace-only body -> past_due ---
 kill $PEAGE 2>/dev/null || true
