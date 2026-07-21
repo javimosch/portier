@@ -36,6 +36,10 @@ class H(http.server.BaseHTTPRequestHandler):
             self.end_headers(); self.wfile.write(b); return
         self._j({"access_token":"AT_mock","token_type":"bearer"})
     def do_GET(self):   # userinfo
+        if self.path.startswith('/userinfo-fail'):
+            self.send_response(401); self.send_header('content-type','application/json')
+            b=b'{"error":"invalid_token"}'; self.send_header('content-length',str(len(b)))
+            self.end_headers(); self.wfile.write(b); return
         if self.path.startswith('/github-userinfo'):
             self._j({"id":4242,"login":"octocat","email":"octo@github.com","name":None})
             return
@@ -82,6 +86,7 @@ curl -sf "$B/guide" | grep -q '"past_due_blocks_new_logins":true' || fail guide-
 curl -sf "$B/guide" | grep -q '"charge_success_requires"' || fail guide-charge-req; ok "guide documents peage charge validation"
 curl -sf "$B/guide" | grep -q '"state_binds_provider":true' || fail guide-security; ok "guide documents state/provider binding"
 curl -sf "$B/guide" | grep -q '"catch_up_stops_on_decline":true' || fail guide-catchup; ok "guide documents partial catch-up on decline"
+curl -sf "$B/guide" | grep -q '"catch_up_max_per_callback":20' || fail guide-catchup-cap; ok "guide documents catch-up loop cap"
 curl -sf "$B/guide" | grep -q '"idp_exchange_failure_not_metered":true' || fail guide-idpfail; ok "guide documents IdP exchange failure not metered"
 curl -sf "$B/" | grep -q portier || fail landing; ok landing
 
@@ -90,6 +95,13 @@ curl -sf "$B/" | grep -q portier || fail landing; ok landing
 APP=$(curl -sf -X POST "$B/v1/apps" -d '{"name":"testapp","redirect_uris":"http://127.0.0.1:9999/done,http://127.0.0.1:9999/done2"}')
 AID=$(echo "$APP" | J "['app_id']"); SEC=$(echo "$APP" | J "['app_secret']")
 [ -n "$SEC" ] || fail app; ok "app registered ($AID)"
+
+# --- provider validation ---
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$B/v1/apps/provider" -H "Authorization: Bearer $SEC" -d '{"kind":"saml"}')" = "400" ] || fail bad-kind; ok "invalid provider kind rejected"
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$B/v1/apps/provider" -H "Authorization: Bearer $SEC" -d '{"kind":"oidc","client_id":"x","client_secret":"y"}')" = "400" ] || fail oidc-urls; ok "oidc without endpoint URLs rejected"
+curl -sf -X POST "$B/v1/apps/provider" -H "Authorization: Bearer $SEC" -d '{"name":"scoped","kind":"oidc","client_id":"cid","client_secret":"csec","authorize_url":"http://127.0.0.1:'$IDP_PORT'/authorize","token_url":"http://127.0.0.1:'$IDP_PORT'/token","userinfo_url":"http://127.0.0.1:'$IDP_PORT'/userinfo","scope":"custom_scope"}' | grep -q '"provider":"scoped"' || fail oidc-scope; ok "oidc custom scope accepted"
+SC=$(sqlite3_retry "$DB" "SELECT scope FROM providers WHERE app_id='$AID' AND name='scoped';")
+[ "$SC" = "custom_scope" ] || fail oidc-scope-db; ok "oidc custom scope persisted"
 
 # provider: demo (no creds needed)
 curl -sf -X POST "$B/v1/apps/provider" -H "Authorization: Bearer $SEC" -d '{"kind":"demo"}' | grep -q '"kind":"demo"' || fail demo-prov; ok "demo provider configured"
@@ -151,6 +163,14 @@ STbt=$(echo "$LOCbt" | sed -n 's/.*state=\([^&]*\).*/\1/p')
 [ "$(curl -s -o /dev/null -w '%{http_code}' "$B/cb/badtok?code=bad&state=$STbt")" = "400" ] || fail idp-tokfail; ok "IdP token exchange failure returns 400"
 curl -s "$B/cb/badtok?code=bad&state=$STbt" | grep -q "IdP exchange" || fail idp-tokfail-msg; ok "IdP exchange error surfaced to browser"
 [ "$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC" | J "['auth_count']")" = "$AUTH_BEFORE" ] || fail idp-tokfail-meter; ok "failed IdP exchange does not meter auth"
+
+# --- IdP userinfo failure: 400 at /cb, auth_count unchanged ---
+curl -sf -X POST "$B/v1/apps/provider" -H "Authorization: Bearer $SEC" -d '{"name":"badui","kind":"oidc","client_id":"x","client_secret":"y","authorize_url":"http://127.0.0.1:'$IDP_PORT'/authorize","token_url":"http://127.0.0.1:'$IDP_PORT'/token","userinfo_url":"http://127.0.0.1:'$IDP_PORT'/userinfo-fail"}' >/dev/null
+LOCui=$(curl -s -o /dev/null -w '%{redirect_url}' "$B/auth/$AID/badui?redirect_uri=http%3A%2F%2F127.0.0.1%3A9999%2Fdone&state=ui")
+STui=$(echo "$LOCui" | sed -n 's/.*state=\([^&]*\).*/\1/p')
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$B/cb/badui?code=bad&state=$STui")" = "400" ] || fail idp-uifail; ok "IdP userinfo failure returns 400"
+curl -s "$B/cb/badui?code=bad&state=$STui" | grep -q "userinfo" || fail idp-uifail-msg; ok "IdP userinfo error surfaced to browser"
+[ "$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC" | J "['auth_count']")" = "$AUTH_BEFORE" ] || fail idp-uifail-meter; ok "failed IdP userinfo does not meter auth"
 
 # --- security guards ---
 # open redirect: unregistered redirect_uri -> 400
@@ -214,6 +234,15 @@ IDin=$(curl -sf -X POST "$B/v1/token" -H "Authorization: Bearer $SEC" -d '{"code
 RAW=$(sqlite3_retry "$DB" "SELECT wallet_token FROM apps WHERE id='$AID';")
 echo "$RAW" | grep -q '^enc:' || fail enc-prefix; ok "wallet_token stored AES-GCM encrypted (enc: prefix)"
 echo "$RAW" | grep -q 'pw_fundedwallet123' && fail enc-plaintext; ok "plaintext wallet token not in the DB"
+# --- wallet KEK: startup migrates legacy plaintext rows to enc: ---
+sqlite3_retry "$DB" "UPDATE apps SET wallet_token='pw_fundedwallet123' WHERE id='$AID';"
+kill $SRV 2>/dev/null || true
+./portier serve -port $PORT 2>/dev/null &
+SRV=$!
+sleep 0.4
+MIG=$(sqlite3_retry "$DB" "SELECT wallet_token FROM apps WHERE id='$AID';")
+echo "$MIG" | grep -q '^enc:' || fail kek-migrate; ok "startup migrates plaintext wallet_token to enc:"
+echo "$MIG" | grep -q 'pw_fundedwallet123' && fail kek-migrate-plain; ok "migrated wallet no longer plaintext in DB"
 # metering: free=2, block=2. Drive demo auths until auth_count crosses free+block,
 # then a peage charge (mock -> 200) must bump blocks_charged.
 oneauth() {
@@ -238,6 +267,12 @@ sqlite3_retry "$DB" "UPDATE apps SET billing='ok', auth_count=8, blocks_charged=
 oneauth
 MEcatch=$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC")
 [ "$(echo "$MEcatch" | J "['blocks_charged']")" -ge 3 ] || fail multi-catchup; ok "meter_auth catches up multiple owed blocks in one callback"
+
+# --- billing: catch-up capped at 20 blocks per callback (pathological backlog) ---
+sqlite3_retry "$DB" "UPDATE apps SET billing='ok', auth_count=48, blocks_charged=0 WHERE id='$AID';"
+oneauth
+MEcap=$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC")
+[ "$(echo "$MEcap" | J "['blocks_charged']")" = "20" ] || fail catchup-cap; ok "meter_auth caps catch-up at 20 blocks per callback"
 
 # --- billing: partial catch-up stops on first declined block ---
 kill $PEAGE 2>/dev/null || true
@@ -519,9 +554,31 @@ SRV=$!
 sleep 0.4
 sqlite3_retry "$DB" "UPDATE apps SET billing='ok' WHERE id='$AID';"
 
+# --- wallet KEK: encrypted token unreadable without PORTIER_KEK -> past_due on charge ---
+kill $SRV 2>/dev/null || true
+unset PORTIER_KEK
+./portier serve -port $PORT 2>/dev/null &
+SRV=$!
+sleep 0.4
+sqlite3_retry "$DB" "UPDATE apps SET billing='ok', auth_count=3, blocks_charged=0 WHERE id='$AID';"
+oneauth
+[ "$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC" | J "['billing']")" = "past_due" ] || fail no-kek; ok "encrypted wallet without PORTIER_KEK sets past_due on charge"
+kill $SRV 2>/dev/null || true
+export PORTIER_KEK="00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+./portier serve -port $PORT 2>/dev/null &
+SRV=$!
+sleep 0.4
+sqlite3_retry "$DB" "UPDATE apps SET billing='ok' WHERE id='$AID';"
+
 # --- feedback intake ---
 FB=$(curl -sf -X POST "$B/v1/feedback" -d '{"message":"e2e test feedback","kind":"test"}')
 echo "$FB" | grep -q '"stored":true' || fail feedback; ok "POST /v1/feedback stores feedback"
+FBID="fb-e2e-dup-$(date +%s)"
+curl -sf -X POST "$B/v1/feedback" -d '{"id":"'$FBID'","message":"first","kind":"test"}' | grep -q '"stored":true' || fail fb-idem; ok "feedback accepts client-supplied id"
+curl -sf -X POST "$B/v1/feedback" -d '{"id":"'$FBID'","message":"duplicate","kind":"test"}' | grep -q '"stored":true' || fail fb-idem2; ok "feedback duplicate id is idempotent"
+[ "$(sqlite3_retry "$DB" "SELECT count(*) FROM feedback WHERE id='$FBID';")" = "1" ] || fail fb-idem-db; ok "feedback duplicate id does not insert twice"
+FB413=$(python3 -c "print('x'*17000)")
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$B/v1/feedback" -d '{"message":"'$FB413'"}')" = "413" ] || fail fb-413; ok "feedback payload over 16 KiB returns 413"
 
 # --- provider delete ---
 curl -sf -X DELETE "$B/v1/apps/provider" -H "Authorization: Bearer $SEC" -d '{"name":"corp"}' | grep -q '"removed":"corp"' || fail prov-del; ok "DELETE /v1/apps/provider removes provider"
