@@ -3,6 +3,8 @@
 OIDC/OAuth SSO broker in machin, metered by peage. The authenticate-third of the
 intrane agent-web triad (peage=pay, relais=receive, portier=authenticate).
 
+- Integration docs (OIDC flow, BYOK provider setup, pay-per-auth billing): `docs/integration.md`.
+  Live contract for agents: `/llms.txt` + `/guide` (generated from `src/guide.src`).
 - Build: `./build.sh`. Test: `./test.sh` (e2e incl. full SSO flow + peage metering/past_due). Keep green.
 - Never `parse()` a client body; use `json_get`+defaults. One type per var name per scope.
 - Stored JSON columns (codes.identity) must be emitted RAW via a struct parse, never json_get (double-encodes) — same gotcha as relais.

@@ -5,7 +5,7 @@ portier brokers the authorization-code flow and hands your app back a verified i
 No per-seat SSO tax — **100 free auths, then 1 EUR per 100 successful auths** funded by a
 [peage](https://peage.intrane.fr) wallet. One static [machin (MFL)](https://github.com/javimosch/machin) binary.
 
-Live: **https://portier.intrane.fr** · docs for agents: **[/llms.txt](https://portier.intrane.fr/llms.txt)** · JSON: **[/guide](https://portier.intrane.fr/guide)**  
+Live: **https://portier.intrane.fr** · docs for agents: **[/llms.txt](https://portier.intrane.fr/llms.txt)** · JSON: **[/guide](https://portier.intrane.fr/guide)** · integration guide (OIDC, BYOK, billing): **[docs/integration.md](./docs/integration.md)**
 (`sso.intrane.fr` is a legacy alias to the same host during OAuth callback migration.)
 
 **OSS vs hosted:** clone/run this binary yourself, or use Intrane’s **hosted** instance at `portier.intrane.fr` (péage-metered). The hostname is the API + thin docs — marketing stays on [intrane.fr](https://intrane.fr).
