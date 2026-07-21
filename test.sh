@@ -92,6 +92,8 @@ curl -sf "$B/guide" | grep -q '"catch_up_stops_on_decline":true' || fail guide-c
 curl -sf "$B/guide" | grep -q '"catch_up_max_per_callback":20' || fail guide-catchup-cap; ok "guide documents catch-up loop cap"
 curl -sf "$B/guide" | grep -q '"idp_exchange_failure_not_metered":true' || fail guide-idpfail; ok "guide documents IdP exchange failure not metered"
 curl -sf "$B/guide" | grep -q '"empty_sub_rejected":true' || fail guide-nosub; ok "guide documents empty sub rejection"
+curl -sf "$B/guide" | grep -q '"app_registration_rate_limit"' || fail guide-ratelimit; ok "guide documents app registration rate limit"
+curl -sf "$B/guide" | grep -q '"wallet_token_min_length":16' || fail guide-wallet-min; ok "guide documents wallet_token min length"
 curl -sf "$B/" | grep -q portier || fail landing; ok landing
 
 # register app (redirect_uri required)
@@ -148,6 +150,8 @@ ID=$(curl -sf -X POST "$B/v1/token" -H "Authorization: Bearer $SEC" -d '{"code":
 [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$B/v1/token" -H "Authorization: Bearer $SEC" -d '{"code":"'$PCODE'"}')" = "404" ] || fail onetime; ok "portier code is one-time"
 # token exchange requires app secret
 [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$B/v1/token" -d '{"code":"'$PCODE'"}')" = "401" ] || fail token-noauth; ok "token exchange requires Bearer app secret"
+# token exchange requires code in body
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$B/v1/token" -H "Authorization: Bearer $SEC" -d '{}')" = "400" ] || fail token-nocode; ok "token exchange without code returns 400"
 # expired portier code -> 410 Gone
 Lexp=$(curl -s -o /dev/null -w '%{redirect_url}' "$B/auth/$AID/demo?redirect_uri=http%3A%2F%2F127.0.0.1%3A9999%2Fdone&state=ex")
 CLexp=$(curl -s -o /dev/null -w '%{redirect_url}' "$Lexp")
@@ -212,7 +216,12 @@ L=$(curl -s -o /dev/null -w '%{redirect_url}' "$B/auth/$AID/demo?redirect_uri=ht
 [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$B/v1/token" -H "Authorization: Bearer $SEC2" -d '{"code":"'$PCX'"}')" = "403" ] || fail crossapp; ok "code not redeemable by another app"
 
 # --- metering: free tier = 2, wallet set, 3rd+ auths bill in blocks (mock charges 100c) ---
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$B/v1/apps/wallet" -H "Authorization: Bearer $SEC" -d '{"wallet_token":"short"}')" = "400" ] || fail wallet-short; ok "wallet_token shorter than 16 chars rejected"
 curl -sf -X POST "$B/v1/apps/wallet" -H "Authorization: Bearer $SEC" -d '{"wallet_token":"pw_fundedwallet123"}' | grep -q '"billing_wallet":"set"' || fail wallet; ok "billing wallet set"
+MEW=$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC")
+[ "$(echo "$MEW" | J "['free_remaining']")" -ge 0 ] || fail me-free; ok "/v1/apps/me reports free_remaining"
+[ "$(echo "$MEW" | J "['billing_wallet']")" = "set" ] || fail me-wallet; ok "/v1/apps/me reports billing_wallet after wallet POST"
+echo "$MEW" | grep -q '"providers"' || fail me-providers; ok "/v1/apps/me lists configured providers"
 # registered alternate redirect_uri works (after wallet — extra auths past free tier need billing)
 LOCalt=$(curl -s -o /dev/null -w '%{redirect_url}' "$B/auth/$AID/demo?redirect_uri=http%3A%2F%2F127.0.0.1%3A9999%2Fdone2&state=alt")
 CBalt=$(curl -s -o /dev/null -w '%{redirect_url}' "$LOCalt")
@@ -383,6 +392,26 @@ sqlite3_retry "$DB" "UPDATE apps SET billing='ok', auth_count=3, blocks_charged=
 oneauth
 [ "$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC" | J "['billing']")" = "past_due" ] || fail ok0-pastdue; ok "peage 200 with ok:0 sets past_due"
 [ "$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC" | J "['blocks_charged']")" = "0" ] || fail ok0-nocharge; ok "peage 200 with ok:0 does not increment blocks_charged"
+
+# --- billing: peage HTTP 200 with ok:false (boolean) -> past_due ---
+kill $PEAGE 2>/dev/null || true
+python3 - <<'PY' &
+import http.server, json
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self,*a): pass
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get('content-length',0)))
+        b=json.dumps({"ok":False,"error":"declined"}).encode()
+        self.send_response(200); self.send_header('content-type','application/json')
+        self.send_header('content-length',str(len(b))); self.end_headers(); self.wfile.write(b)
+http.server.HTTPServer(('127.0.0.1',18799),H).serve_forever()
+PY
+PEAGE=$!
+sleep 0.2
+sqlite3_retry "$DB" "UPDATE apps SET billing='ok', auth_count=3, blocks_charged=0 WHERE id='$AID';"
+oneauth
+[ "$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC" | J "['billing']")" = "past_due" ] || fail okfalse-pastdue; ok "peage 200 with ok:false sets past_due"
+[ "$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC" | J "['blocks_charged']")" = "0" ] || fail okfalse-nocharge; ok "peage 200 with ok:false does not increment blocks_charged"
 
 # --- billing: peage HTTP 200 with ok as JSON string "1" -> billed ---
 kill $PEAGE 2>/dev/null || true
@@ -641,9 +670,18 @@ FB413=$(python3 -c "print('x'*17000)")
 # --- provider delete ---
 curl -sf -X DELETE "$B/v1/apps/provider" -H "Authorization: Bearer $SEC" -d '{"name":"corp"}' | grep -q '"removed":"corp"' || fail prov-del; ok "DELETE /v1/apps/provider removes provider"
 [ "$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$B/v1/apps/provider" -H "Authorization: Bearer $SEC" -d '{"name":"nope"}')" = "404" ] || fail prov-del-404; ok "DELETE unknown provider -> 404"
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$B/auth/$AID/corp?redirect_uri=http%3A%2F%2F127.0.0.1%3A9999%2Fdone&state=del")" = "400" ] || fail prov-del-auth; ok "deleted provider rejected at /auth"
 
 # operator CLI
 ./portier app-new -name ops -redirect https://x/y | grep -q '"ok":true' || fail cli-new; ok "cli app-new"
 ./portier stats | grep -q '"auths"' || fail cli-stats; ok "cli stats"
+
+# app registration rate limit (10/h/IP) — last: 4 HTTP creates already (noredir, main, cross-app, nowallet)
+ri=0
+while [ $ri -lt 6 ]; do
+  curl -sf -X POST "$B/v1/apps" -d '{"redirect_uris":"http://127.0.0.1:9999/r'$ri'"}' >/dev/null || fail rate-prefill
+  ri=$((ri+1))
+done
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$B/v1/apps" -d '{"redirect_uris":"http://127.0.0.1:9999/r10"}')" = "429" ] || fail rate-limit; ok "app registration rate-limited at 10/h/IP"
 
 echo "ALL $P TESTS PASSED"

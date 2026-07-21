@@ -29,9 +29,10 @@ func llms_txt(base) (t) {
         "   -> {\"identity\":{\"sub\":\"..\",\"email\":\"..\",\"name\":\"..\",\"provider\":\"github\"}}\n\n" +
         "## Endpoints\n\n" +
         "POST /v1/apps {name, redirect_uris}                    -> {app_id, app_secret}\n" +
+        "  (rate-limited: 10 registrations per hour per client IP)\n" +
         "POST /v1/apps/provider   Bearer secret                 -> configure github|google|intrane|oidc|demo\n" +
         "DELETE /v1/apps/provider Bearer secret {name}          -> remove a provider from the app\n" +
-        "POST /v1/apps/wallet     Bearer secret {wallet_token}  -> set the peage billing wallet\n" +
+        "POST /v1/apps/wallet     Bearer secret {wallet_token}  -> set the peage billing wallet (min 16 chars)\n" +
         "GET  /v1/apps/me         Bearer secret                 -> auth_count, free tier, billing status\n" +
         "GET  /auth/<app_id>/<provider>?redirect_uri=&state=    -> start a login (browser)\n" +
         "GET  /cb/<provider>                                    -> IdP callback (register this at your IdP)\n" +
@@ -53,7 +54,7 @@ func llms_txt(base) (t) {
         "  Peage charges use idempotency_key app_id:block:N (N = 1-based block number).\n" +
         "  A charge succeeds only when peage returns HTTP 200 with a non-empty JSON body and ok:1\n" +
         "  (number), ok:\"1\" (string), or ok:true — anything else (402, whitespace body, 200+ok:0,\n" +
-        "  missing ok, network error) flags\n" +
+        "  ok:false, missing ok, network error) flags\n" +
         "  past_due without interrupting the in-flight login. Multi-block catch-up stops on the\n" +
         "  first declined block (blocks already billed stay charged); at most 20 blocks are\n" +
         "  billed per callback to avoid stalling the IdP redirect.\n" +
@@ -66,13 +67,13 @@ func guide_json(base) (j) {
         "\"base_url\":" + json(base) + ",\"free_auths\":" + str(free_auths()) + ",\"price\":\"1 EUR per 100 successful auths\",\"pay_rail\":\"peage\",\"protocols\":[\"oidc\",\"oauth\"],\"saml\":\"roadmap (machin#484)\"," +
         "\"providers\":[\"github\",\"google\",\"intrane\",\"oidc\",\"demo\"]," +
         "\"flow\":[\"POST /v1/apps -> app_id + secret\",\"POST /v1/apps/provider -> configure IdP\",\"POST /v1/apps/wallet -> peage wallet (required past free tier)\",\"send user to /auth/<app_id>/<provider>?redirect_uri=&state=\",\"receive ?code= at your redirect_uri\",\"POST /v1/token {code} -> identity\"]," +
-        "\"billing\":{\"free_auths\":" + str(free_auths()) + ",\"block_size\":" + str(block_size()) + ",\"price_cents_per_block\":" + str(block_charge_cents()) + ",\"pay_rail\":\"peage\",\"past_due_blocks_new_logins\":true,\"in_flight_never_blocked\":true,\"catch_up_stops_on_decline\":true,\"catch_up_max_per_callback\":20,\"idempotency_key\":\"app_id:block:N\",\"charge_success_requires\":\"HTTP 200 with non-empty JSON body and ok:1, ok:\\\"1\\\", or ok:true\"}," +
+        "\"billing\":{\"free_auths\":" + str(free_auths()) + ",\"block_size\":" + str(block_size()) + ",\"price_cents_per_block\":" + str(block_charge_cents()) + ",\"pay_rail\":\"peage\",\"past_due_blocks_new_logins\":true,\"in_flight_never_blocked\":true,\"catch_up_stops_on_decline\":true,\"catch_up_max_per_callback\":20,\"idempotency_key\":\"app_id:block:N\",\"charge_success_requires\":\"HTTP 200 with non-empty JSON body and ok:1, ok:\\\"1\\\", or ok:true\",\"app_registration_rate_limit\":\"10/h/IP\",\"wallet_token_min_length\":16}," +
         "\"security\":{\"state_binds_provider\":true,\"idp_error_redirect_handled\":true,\"idp_exchange_failure_not_metered\":true,\"empty_sub_rejected\":true}," +
         "\"endpoints\":[" +
-        "{\"method\":\"POST\",\"path\":\"/v1/apps\",\"body\":{\"name\":\"optional\",\"redirect_uris\":\"required, comma-separated\"}}," +
+        "{\"method\":\"POST\",\"path\":\"/v1/apps\",\"body\":{\"name\":\"optional\",\"redirect_uris\":\"required, comma-separated\"},\"rate_limit\":\"10/h/IP\"}," +
         "{\"method\":\"POST\",\"path\":\"/v1/apps/provider\",\"auth\":\"Bearer app secret\",\"body\":{\"kind\":\"github|google|intrane|oidc|demo\",\"client_id\":\"..\",\"client_secret\":\"..\"}}," +
         "{\"method\":\"DELETE\",\"path\":\"/v1/apps/provider\",\"auth\":\"Bearer app secret\",\"body\":{\"name\":\"provider name to remove\"}}," +
-        "{\"method\":\"POST\",\"path\":\"/v1/apps/wallet\",\"auth\":\"Bearer app secret\",\"body\":{\"wallet_token\":\"pw_..\"}}," +
+        "{\"method\":\"POST\",\"path\":\"/v1/apps/wallet\",\"auth\":\"Bearer app secret\",\"body\":{\"wallet_token\":\"pw_.. (min 16 chars)\"}}," +
         "{\"method\":\"GET\",\"path\":\"/v1/apps/me\",\"auth\":\"Bearer app secret\"}," +
         "{\"method\":\"GET\",\"path\":\"/auth/<app_id>/<provider>\",\"query\":\"redirect_uri, state\"}," +
         "{\"method\":\"GET\",\"path\":\"/cb/<provider>\",\"note\":\"IdP callback — register at your IdP\"}," +

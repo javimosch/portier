@@ -47,9 +47,12 @@ lacks ([machin#484](https://github.com/javimosch/machin/issues/484)).
 peage wallet (`POST /v1/apps/wallet`). Metering never interrupts an in-flight login; a
 depleted wallet only blocks *new* login initiations (the app owner's cue to fund). A charge
 succeeds only when peage returns HTTP 200 with a non-empty JSON body and `ok:1` (number),
-`ok:"1"` (string), or `ok:true` — anything else flags `past_due`. Multi-block catch-up stops on the first declined
+`ok:"1"` (string), or `ok:true` — `ok:0`, `ok:false`, or a missing `ok` field flags `past_due`. Multi-block catch-up stops on the first declined
 charge (blocks already billed stay charged); at most 20 blocks are billed per callback.
 Set `PORTIER_FREE_AUTHS` / `PORTIER_BLOCK` to tune.
+
+App registration (`POST /v1/apps`) is rate-limited to 10 per hour per client IP.
+Wallet tokens must be at least 16 characters (`POST /v1/apps/wallet`).
 
 ## Security
 
