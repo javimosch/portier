@@ -5,29 +5,32 @@ portier brokers the authorization-code flow and hands your app back a verified i
 No per-seat SSO tax — **100 free auths, then 1 EUR per 100 successful auths** funded by a
 [peage](https://peage.intrane.fr) wallet. One static [machin (MFL)](https://github.com/javimosch/machin) binary.
 
-Live: **https://sso.intrane.fr** · docs for agents: **[/llms.txt](https://sso.intrane.fr/llms.txt)** · JSON: **[/guide](https://sso.intrane.fr/guide)**
+Live: **https://portier.intrane.fr** · docs for agents: **[/llms.txt](https://portier.intrane.fr/llms.txt)** · JSON: **[/guide](https://portier.intrane.fr/guide)**  
+(`sso.intrane.fr` is a legacy alias to the same host during OAuth callback migration.)
+
+**OSS vs hosted:** clone/run this binary yourself, or use Intrane’s **hosted** instance at `portier.intrane.fr` (péage-metered). The hostname is the API + thin docs — marketing stays on [intrane.fr](https://intrane.fr).
 
 ## Your app makes two curls
 
 ```sh
 # 1. register (save the secret — shown once)
-curl -s -X POST https://sso.intrane.fr/v1/apps \
+curl -s -X POST https://portier.intrane.fr/v1/apps \
   -d '{"name":"my app","redirect_uris":"https://myapp.com/auth/done"}'
 # -> {"app_id":"app_…","app_secret":"psk_…"}
 
 # 2. add a provider — try the built-in demo first (no real IdP needed)
-curl -s -X POST https://sso.intrane.fr/v1/apps/provider \
+curl -s -X POST https://portier.intrane.fr/v1/apps/provider \
   -H 'Authorization: Bearer psk_…' -d '{"kind":"demo"}'
-# real GitHub: {"kind":"github","client_id":"…","client_secret":"…"} (callback = https://sso.intrane.fr/cb/github)
+# real GitHub: {"kind":"github","client_id":"…","client_secret":"…"} (callback = https://portier.intrane.fr/cb/github)
 ```
 
 Then the login flow: send the user's browser to
-`https://sso.intrane.fr/auth/<app_id>/<provider>?redirect_uri=<registered>&state=<csrf>`.
+`https://portier.intrane.fr/auth/<app_id>/<provider>?redirect_uri=<registered>&state=<csrf>`.
 portier runs the OAuth dance and redirects back to your `redirect_uri` with `?code=…`.
 Your server exchanges it (one curl, one-time code):
 
 ```sh
-curl -s -X POST https://sso.intrane.fr/v1/token \
+curl -s -X POST https://portier.intrane.fr/v1/token \
   -H 'Authorization: Bearer psk_…' -d '{"code":"pc_…"}'
 # -> {"identity":{"sub":"…","email":"…","name":"…","provider":"github"}}
 ```
@@ -36,7 +39,7 @@ curl -s -X POST https://sso.intrane.fr/v1/token \
 
 **github**, **google**, generic **oidc** (Keycloak/Auth0/Okta/GitLab — supply
 `authorize_url`/`token_url`/`userinfo_url`), and a **demo** provider for curl-testing the
-whole flow. And **[machin-idp](https://github.com/javimosch/machin-idp)** (`idp.intrane.fr`) — the intrane OIDC provider — gives your apps "Login with intrane" through the same broker. **SAML** is on the roadmap — it needs RSA + XML-DSig the pure-MFL runtime
+whole flow. And **[machin-idp](https://github.com/javimosch/machin-idp)** — OSS IdP; Intrane’s free hosted “Login with Intrane” is at **`idp.intrane.fr`** — same broker path as Google/GitHub. **SAML** is on the roadmap — it needs RSA + XML-DSig the pure-MFL runtime
 lacks ([machin#484](https://github.com/javimosch/machin/issues/484)).
 
 ## Billing (peage)
