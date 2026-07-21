@@ -50,7 +50,7 @@ curl -s -X POST https://portier.intrane.fr/v1/token \
 </div>
 
 <h2>providers</h2>
-<p><strong>GitHub, Google, and any generic OIDC provider</strong> (Keycloak, Auth0, Okta, GitLab — supply the discovery URLs) — plus <strong><a href="https://idp.intrane.fr">machin-idp</a></strong>, the intrane identity provider, so your apps can offer <strong>"Login with intrane"</strong> through the same broker. A built-in <strong>demo</strong> provider lets you test the whole flow with curl before wiring a real IdP. SAML is on the <a href="https://github.com/javimosch/machin/issues/484">roadmap</a> (it needs RSA/XML-DSig that the pure-MFL runtime doesn't have yet).</p>
+<p><strong>GitHub, Google, and any generic OIDC provider</strong> (Keycloak, Auth0, Okta, GitLab — supply the discovery URLs) — plus open-source <strong><a href="https://github.com/javimosch/machin-idp">machin-idp</a></strong> (self-host; <a href="https://javimosch.github.io/machin-idp/">docs</a>). A built-in <strong>demo</strong> provider lets you test the whole flow with curl before wiring a real IdP. SAML is on the <a href="https://github.com/javimosch/machin/issues/484">roadmap</a> (it needs RSA/XML-DSig that the pure-MFL runtime doesn't have yet).</p>
 
 <h2>the interface is the docs</h2>
 <pre>curl -s https://portier.intrane.fr/llms.txt   # the full contract, written for agents
