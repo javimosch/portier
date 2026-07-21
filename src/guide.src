@@ -14,7 +14,7 @@ func llms_txt(base) (t) {
         "   curl -s -X POST " + base + "/v1/apps/provider -H 'Authorization: Bearer psk_..' -d '{\"kind\":\"demo\"}'\n" +
         "   Real GitHub (make an OAuth app at github.com/settings/developers, callback = " + base + "/cb/github):\n" +
         "   curl -s -X POST " + base + "/v1/apps/provider -H 'Authorization: Bearer psk_..' -d '{\"kind\":\"github\",\"client_id\":\"..\",\"client_secret\":\"..\"}'\n" +
-        "   Google: {\"kind\":\"google\",...}. machin-idp (Login with intrane): {\"kind\":\"intrane\",...} (callback = " + base + "/cb/intrane)\n" +
+        "   Google: {\"kind\":\"google\",...}. machin-idp preset: {\"kind\":\"intrane\",...} (callback = " + base + "/cb/intrane; operator convenience — self-host machin-idp for public use)\n" +
         "   Any other OIDC: {\"kind\":\"oidc\",\"client_id\":..,\"client_secret\":..,\"authorize_url\":..,\"token_url\":..,\"userinfo_url\":..}\n" +
         "3. Set a billing wallet (peage — funds the pay-per-auth past the free tier):\n" +
         "   curl -s -X POST " + base + "/v1/apps/wallet -H 'Authorization: Bearer psk_..' -d '{\"wallet_token\":\"pw_..\"}'\n" +

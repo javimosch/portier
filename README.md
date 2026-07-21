@@ -42,7 +42,7 @@ curl -s -X POST https://portier.intrane.fr/v1/token \
 **github**, **google**, generic **oidc** (Keycloak/Auth0/Okta/GitLab — supply
 `authorize_url`/`token_url`/`userinfo_url`), **intrane** (machin-idp preset — same as
 `kind:intrane`), and a **demo** provider for curl-testing the
-whole flow. And **[machin-idp](https://github.com/javimosch/machin-idp)** — OSS IdP; Intrane’s free hosted “Login with Intrane” is at **`idp.intrane.fr`** — same broker path as Google/GitHub. **SAML** is on the roadmap — it needs RSA + XML-DSig the pure-MFL runtime
+whole flow. And **[machin-idp](https://github.com/javimosch/machin-idp)** — OSS IdP you self-host (docs: [GitHub Pages](https://javimosch.github.io/machin-idp/)); portier’s **`intrane`** preset is an operator convenience for a private IdP, not a public hosted product. **SAML** is on the roadmap — it needs RSA + XML-DSig the pure-MFL runtime
 lacks ([machin#484](https://github.com/javimosch/machin/issues/484)).
 
 
