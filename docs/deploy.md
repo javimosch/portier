@@ -41,3 +41,8 @@ mid-login. `charge_block` POSTs to peage `/v1/charge` with an idempotency key
 
 Tune free tier / block size with `PORTIER_FREE_AUTHS` (default 100) and `PORTIER_BLOCK`
 (default 100 auths per 1 EUR block).
+
+## API limits
+
+- `POST /v1/apps` — 10 registrations per hour per client IP (429 when exceeded).
+- `POST /v1/apps/wallet` — `wallet_token` must be at least 16 characters.
