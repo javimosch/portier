@@ -10,4 +10,4 @@ intrane agent-web triad (peage=pay, relais=receive, portier=authenticate).
 - Security: HMAC-signed expiring state (CSRF), redirect_uri exact-match (open-redirect guard), one-time short-TTL portier codes redeemable only with app secret, identities never in browser URL.
 - Billing: 100 free auths then 1 EUR/100 successful auths (blocks; PORTIER_BLOCK/FREE_AUTHS tunable). Best-effort charge, never blocks in-flight login; past_due blocks only NEW initiations. peage merchant m_720571762d72.
 - Wallet tokens encrypted at rest (AES-256-GCM via PORTIER_KEK); plaintext tolerated on read for legacy rows, rewritten on next save.
-- Deploy: dk1 /opt/portier, env /etc/portier/portier.env (640), systemd :8797, hotify sso.intrane.fr.
+- Deploy: dk1 /opt/portier, env /etc/portier/portier.env (640), systemd :8797, hotify `portier.intrane.fr` (canonical; `sso.intrane.fr` = legacy alias).

@@ -24,23 +24,23 @@ a{color:var(--acc)}footer{margin-top:3rem;color:var(--dim);font-size:12.5px}
 <main>
 <div><span class="tag">agent-first</span><span class="tag">no per-seat tax</span><span class="tag">pay-per-auth</span><span class="tag">one static binary</span></div>
 <h1><em>portier</em> — SSO for your app in one redirect</h1>
-<p><strong>Add "Login with Google / GitHub / any OIDC provider" without implementing OAuth.</strong> portier brokers the authorization-code flow and hands your app back a verified identity. No per-seat SSO subscription — <strong>100 free auths, then 1&nbsp;EUR per 100 successful auths</strong>, funded by a <a href="https://peage.intrane.fr">peage</a> wallet.</p>
+<p><strong>Add "Login with Google / GitHub / any OIDC provider" without implementing OAuth.</strong> portier brokers the authorization-code flow and hands your app back a verified identity. No per-seat SSO subscription — <strong>100 free auths, then 1&nbsp;EUR per 100 successful auths</strong>, funded by a <a href="https://peage.intrane.fr">peage</a> wallet. <strong>OSS</strong> binary (self-host) or this <strong>Intrane hosted</strong> instance (metered). Hostname = API + thin docs — not a separate marketing site.</p>
 
 <pre># 1. register your app
-curl -s -X POST https://sso.intrane.fr/v1/apps \
+curl -s -X POST https://portier.intrane.fr/v1/apps \
   -d '{"name":"my app","redirect_uris":"https://myapp.com/auth/done"}'
 # -&gt; {"app_id":"app_…","app_secret":"psk_…"}
 
 # 2. add a provider (try the built-in demo first — no real IdP needed)
-curl -s -X POST https://sso.intrane.fr/v1/apps/provider \
+curl -s -X POST https://portier.intrane.fr/v1/apps/provider \
   -H 'Authorization: Bearer psk_…' -d '{"kind":"demo"}'
 
 # 3. set a billing wallet (peage — funds auths past the free tier)
-curl -s -X POST https://sso.intrane.fr/v1/apps/wallet \
+curl -s -X POST https://portier.intrane.fr/v1/apps/wallet \
   -H 'Authorization: Bearer psk_…' -d '{"wallet_token":"pw_…"}'
 
 # 4. send the user to portier; get ?code= back at your redirect_uri; exchange it:
-curl -s -X POST https://sso.intrane.fr/v1/token \
+curl -s -X POST https://portier.intrane.fr/v1/token \
   -H 'Authorization: Bearer psk_…' -d '{"code":"pc_…"}'
 # -&gt; {"identity":{"sub":"…","email":"…","name":"…","provider":"github"}}</pre>
 
@@ -53,8 +53,8 @@ curl -s -X POST https://sso.intrane.fr/v1/token \
 <p><strong>GitHub, Google, and any generic OIDC provider</strong> (Keycloak, Auth0, Okta, GitLab — supply the discovery URLs) — plus <strong><a href="https://idp.intrane.fr">machin-idp</a></strong>, the intrane identity provider, so your apps can offer <strong>"Login with intrane"</strong> through the same broker. A built-in <strong>demo</strong> provider lets you test the whole flow with curl before wiring a real IdP. SAML is on the <a href="https://github.com/javimosch/machin/issues/484">roadmap</a> (it needs RSA/XML-DSig that the pure-MFL runtime doesn't have yet).</p>
 
 <h2>the interface is the docs</h2>
-<pre>curl -s https://sso.intrane.fr/llms.txt   # the full contract, written for agents
-curl -s https://sso.intrane.fr/guide      # the same contract as JSON</pre>
+<pre>curl -s https://portier.intrane.fr/llms.txt   # the full contract, written for agents
+curl -s https://portier.intrane.fr/guide      # the same contract as JSON</pre>
 
 <footer>portier is a single static binary in <a href="https://github.com/javimosch/machin">machin (MFL)</a>. An <a href="https://intrane.fr">intrane.fr</a> experiment. Billed via <a href="https://peage.intrane.fr">peage</a> — pay (péage), receive (<a href="https://relais.intrane.fr">relais</a>), authenticate (portier).  · <a href="https://status.dev.intrane.fr/g/portier">status</a> · Contact: javi@intrane.fr</footer>
 </main>

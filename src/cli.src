@@ -43,7 +43,7 @@ func cmd_feedback(a) {
     payload := "{\"app\":\"portier\",\"version\":" + json(app_version()) + ",\"kind\":" + json(kind) + ",\"message\":" + json(msg) + ",\"context\":" + json(ctx) + ",\"reporter\":" + json(reporter) + ",\"id\":" + json(id) + "}"
     app := env("PORTIER_URL")
     if app == "" { app = env("PORTIER_PUBLIC_URL") }
-    if app == "" { app = "https://sso.intrane.fr" }
+    if app == "" { app = "https://portier.intrane.fr" }
     stored := fb_post(app + "/v1/feedback", payload)
     relay := env("FEEDBACK_RELAY")
     if relay == "" { relay = "https://feedback.intrane.fr" }
