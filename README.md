@@ -48,7 +48,8 @@ peage wallet (`POST /v1/apps/wallet`). Metering never interrupts an in-flight lo
 depleted wallet only blocks *new* login initiations (the app owner's cue to fund). A charge
 succeeds only when peage returns HTTP 200 with a non-empty JSON body and `ok:1` (string or
 number) — anything else flags `past_due`. Multi-block catch-up stops on the first declined
-charge (blocks already billed stay charged). Set `PORTIER_FREE_AUTHS` / `PORTIER_BLOCK` to tune.
+charge (blocks already billed stay charged); at most 20 blocks are billed per callback.
+Set `PORTIER_FREE_AUTHS` / `PORTIER_BLOCK` to tune.
 
 ## Security
 
