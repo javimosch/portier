@@ -73,6 +73,12 @@ identities without a usable `sub` are rejected at `/cb` without metering. v1 tru
 ## Build & run
 
 ```sh
+# Linux x86_64, statically linked — no runtime dependencies, no glibc floor
+# (runs on Alpine and FROM scratch too):
+curl -fsSL https://github.com/javimosch/portier/releases/latest/download/portier-linux-x86_64 -o portier
+chmod +x portier && ./portier help
+
+# ...or build it yourself (needs machin):
 ./build.sh     # -> ./portier
 ./test.sh      # e2e (mocked IdP + peage), incl. full SSO flow + metering/past_due
 ```
