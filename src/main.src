@@ -31,7 +31,18 @@ func main() {
         out_ok("{\"version\":\"" + app_version() + "\"}")
     } else if cmd == "help-json" {
         println(help_json())
-    } else {
+    } else if cmd == "help" || cmd == "--help" || cmd == "-h" {
         println(help_text())
+    } else {
+        // An unknown verb is an INPUT ERROR, not a success. This printed the
+        // help text to stdout and exited 0, so an agent that mistyped a verb got
+        // a help page on the channel reserved for data and a status saying the
+        // run had worked — indistinguishable from success.
+        //
+        // stderr + exit 80 (cli-output-spec: 80-89 = input/validation). Caught by
+        // the scheduled install sweep the day this binary was first published.
+        write(2, "{\"ok\":false,\"error\":{\"type\":\"input\",\"message\":\"unknown command: " + cmd + "\",\"recoverable\":true,\"suggestions\":[\"portier help\"]}}\n")
+        println(help_text())
+        exit(80)
     }
 }
