@@ -140,12 +140,15 @@ func handle_callback(req) (res) {
     payload, sok := state_verify(st)
     if sok == 0 { res = html_error("bad or tampered state")  return }
     parts := split(payload, "|")
-    if len(parts) < 5 { res = html_error("bad state payload")  return }
+    n := len(parts)
+    if n < 5 { res = html_error("bad state payload")  return }
     app_id := parts[0]
     state_provider := parts[1]
     app_redirect := parts[2]
+    exp := parse_int(parts[n-1])
     app_state := parts[3]
-    exp := parse_int(parts[4])
+    j := 4
+    for j < n-1 { app_state = app_state + "|" + parts[j]  j = j + 1 }
     if now() > exp { res = html_error("login expired — start again")  return }
     // state is signed with the provider name — URL path must match (prevents swapping IdPs)
     if state_provider != provider { res = html_error("provider mismatch — start login again")  return }
