@@ -20,6 +20,8 @@ func db_migrate(db) {
     // apps = relying applications. wallet_token is a peage wallet the app funds;
     // encrypted at rest via wallet_encrypt (PORTIER_KEK) when set.
     sqlite_exec(db, "CREATE TABLE IF NOT EXISTS apps(id TEXT PRIMARY KEY, secret TEXT, name TEXT DEFAULT '', redirect_uris TEXT DEFAULT '', wallet_token TEXT DEFAULT '', auth_count INTEGER DEFAULT 0, blocks_charged INTEGER DEFAULT 0, billing TEXT DEFAULT 'ok', created_at INTEGER)")
+    // allowlist: comma-separated emails or @domain patterns; empty = allow all
+    sqlite_exec(db, "ALTER TABLE apps ADD COLUMN allowlist TEXT DEFAULT ''")
     sqlite_exec(db, "CREATE TABLE IF NOT EXISTS providers(app_id TEXT, name TEXT, kind TEXT, client_id TEXT, client_secret TEXT, authorize_url TEXT, token_url TEXT, userinfo_url TEXT, scope TEXT, PRIMARY KEY(app_id, name))")
     // one-time codes the app exchanges for the verified identity
     sqlite_exec(db, "CREATE TABLE IF NOT EXISTS codes(code TEXT PRIMARY KEY, app_id TEXT, identity TEXT, expires_at INTEGER)")
@@ -140,11 +142,12 @@ type AppRow struct {
     auth_count    int
     blocks_charged int
     billing       string
+    allowlist     string
     created_at    int
 }
 
 func app_cols() (c) {
-    c = "id, COALESCE(name,'') AS name, COALESCE(redirect_uris,'') AS redirect_uris, COALESCE(wallet_token,'') AS wallet_token, COALESCE(auth_count,0) AS auth_count, COALESCE(blocks_charged,0) AS blocks_charged, COALESCE(billing,'ok') AS billing, created_at"
+    c = "id, COALESCE(name,'') AS name, COALESCE(redirect_uris,'') AS redirect_uris, COALESCE(wallet_token,'') AS wallet_token, COALESCE(auth_count,0) AS auth_count, COALESCE(blocks_charged,0) AS blocks_charged, COALESCE(billing,'ok') AS billing, COALESCE(allowlist,'') AS allowlist, created_at"
 }
 
 func app_by_id(db, id) (a, ok) {

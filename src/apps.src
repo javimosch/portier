@@ -146,5 +146,23 @@ func handle_app_status(req) (res) {
     if remaining < 0 { remaining = 0 }
     wallet := "unset"
     if a.wallet_token != "" { wallet = "set" }
-    res = ok_json("{\"ok\":1,\"app_id\":\"" + a.id + "\",\"name\":" + json(a.name) + ",\"auth_count\":" + str(a.auth_count) + ",\"free_auths\":" + str(free) + ",\"free_remaining\":" + str(remaining) + ",\"blocks_charged\":" + str(a.blocks_charged) + ",\"billing\":\"" + a.billing + "\",\"billing_wallet\":\"" + wallet + "\",\"providers\":" + prows + "}")
+    al := "off"
+    if a.allowlist != "" { al = "on" }
+    res = ok_json("{\"ok\":1,\"app_id\":\"" + a.id + "\",\"name\":" + json(a.name) + ",\"auth_count\":" + str(a.auth_count) + ",\"free_auths\":" + str(free) + ",\"free_remaining\":" + str(remaining) + ",\"blocks_charged\":" + str(a.blocks_charged) + ",\"billing\":\"" + a.billing + "\",\"billing_wallet\":\"" + wallet + "\",\"allowlist\":\"" + al + "\",\"providers\":" + prows + "}")
+}
+
+// POST /v1/apps/allowlist  {allowlist} — set per-app email allowlist.
+// Comma-separated emails or @domain patterns. Empty string clears it (allow all).
+func handle_app_allowlist(req) (res) {
+    db := db_open()
+    if db == 0 { res = response("500 Internal Server Error", "application/json", "{\"ok\":0,\"error\":\"db\"}")  return }
+    a, ok := app_by_secret(db, req)
+    if ok == 0 { sqlite_close(db)  res = response("401 Unauthorized", "application/json", "{\"ok\":0,\"error\":\"unknown app secret\"}")  return }
+    av, _ := json_get(req.body, ".allowlist")
+    al := trim(unq(av))
+    sqlite_exec(db, "UPDATE apps SET allowlist = ? WHERE id = ?", []string{al, a.id})
+    sqlite_close(db)
+    status := "off"
+    if al != "" { status = "on" }
+    res = ok_json("{\"ok\":1,\"app_id\":\"" + a.id + "\",\"allowlist\":\"" + status + "\",\"note\":\"comma-separated emails or @domain patterns; empty clears it\"}")
 }

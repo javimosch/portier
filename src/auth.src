@@ -35,6 +35,22 @@ func redirect_registered(a, uri) (ok) {
     }
 }
 
+// allowlist_match: if the app has an allowlist, the email must match an entry.
+// Entries can be exact emails (user@example.com) or domain patterns (@example.com).
+// Empty allowlist = allow everyone.
+func allowlist_match(a, email) (ok) {
+    ok = 1
+    if a.allowlist == "" { return }
+    ok = 0
+    el := to_lower(email)
+    for _, entry := range split(a.allowlist, ",") {
+        e := trim(to_lower(entry))
+        if e == "" { continue }
+        if e == el { ok = 1  return }
+        if has_prefix(e, "@") && has_suffix(el, e) { ok = 1  return }
+    }
+}
+
 func html_error(msg) (res) {
     res = response("400 Bad Request", "text/html; charset=utf-8", "<!doctype html><meta charset=utf-8><body style=\"font-family:ui-monospace,monospace;background:#0a0a0c;color:#e2e8f0;padding:2rem\"><h2 style=\"color:#f87171\">portier: " + msg + "</h2></body>")
 }
@@ -182,6 +198,19 @@ func handle_callback(req) (res) {
         sqlite_close(db)
         res = html_error("IdP did not return a user identifier (sub)")
         return
+    }
+
+    // per-app email allowlist (empty = allow all)
+    a, aok := app_by_id(db, app_id)
+    if aok == 0 { sqlite_close(db)  res = html_error("unknown app")  return }
+    emv, _ := json_get(identity, ".email")
+    em := unq(emv)
+    if em != "" && em != "null" {
+        if allowlist_match(a, em) == 0 {
+            sqlite_close(db)
+            res = html_error("this email is not on the app's allowlist — contact the app owner")
+            return
+        }
     }
 
     // meter this successful auth (best-effort billing, never blocks the user)
