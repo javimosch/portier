@@ -114,12 +114,26 @@ func free_auths() (n) {
     if env("PORTIER_FREE_AUTHS") == "" { n = 100 }
 }
 
+// INVARIANT: every caller uses secs = 3600. `win` is now()/secs, so purge_stale
+// (which sweeps rows with win < now()/3600 - 2) is only correct for that window.
+// A longer window would produce a smaller `win` and be purged early, silently
+// resetting the limit; a shorter one would never be purged and would leak rows.
+// Change both together.
 func rate_allow(db, key, secs, max) (allowed) {
     win := now() / secs
     sqlite_exec(db, "INSERT INTO ratelimit(k, win, n) VALUES(?,?,1) ON CONFLICT(k) DO UPDATE SET n = CASE WHEN win = " + str(win) + " THEN n + 1 ELSE 1 END, win = " + str(win), []string{key, str(win)})
     rows := sqlite_query(db, "SELECT n FROM ratelimit WHERE k = ?", []string{key})
     v, _ := json_get(rows, "[0].n")
     allowed = parse_int(v) <= max
+}
+
+// purge_stale drops rows nothing can use again: authorization codes past their
+// TTL (they are only DELETEd on redemption, so abandoned logins accumulated
+// forever) and rate-limit counters from closed windows. Both tables were
+// append-mostly and unbounded, on the same file that holds the client secrets.
+func purge_stale(db) {
+    sqlite_exec(db, "DELETE FROM codes WHERE expires_at < ?", []string{str(now())})
+    sqlite_exec(db, "DELETE FROM ratelimit WHERE win < ?", []string{str((now() / 3600) - 2)})
 }
 
 func bearer_token(req) (t) {

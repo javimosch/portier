@@ -30,6 +30,14 @@ func handle_feedback(req) (res) {
     db := db_open()
     if db == 0 { res = response("500 Internal Server Error", "application/json", "{\"ok\":0,\"error\":\"db\"}")  return }
     db_migrate(db)
+    // Unauthenticated INSERT: without a limit this is a disk-fill primitive
+    // against the same database that holds the OAuth client secrets. The client
+    // chooses `id`, so INSERT OR IGNORE de-duplicates nothing an attacker sends.
+    if rate_allow(db, "fb:" + client_ip(req), 3600, 20) == false {
+        sqlite_close(db)
+        res = response("429 Too Many Requests", "application/json", "{\"ok\":0,\"error\":\"too much feedback — slow down\"}")
+        return
+    }
     idv, _ := json_get(req.body, ".id")
     id := unq(idv)
     if id == "" { id = newid() }
@@ -46,6 +54,7 @@ func run_server(port) {
     db := db_open()
     db_migrate(db)
     migrate_encrypt_wallets(db)
+    purge_stale(db)
     sqlite_close(db)
     if env("PORTIER_KEK") == "" { write(2, "{\"warn\":\"PORTIER_KEK not set — app wallet tokens stored PLAINTEXT (dev only)\"}\n") }
     set_trust_proxy(1)
@@ -54,6 +63,14 @@ func run_server(port) {
     set_max_body(65536)
     set_read_timeout(15000)
     if env("PORTIER_SECRET") == "" { write(2, "{\"warn\":\"PORTIER_SECRET not set — login state signed with a dev secret\"}\n") }
-    write(2, "{\"event\":\"listening\",\"port\":" + str(port) + "}\n")
-    serve(port, func(req) { return handle(req) })
+    // Bind the loopback the reverse proxy connects to, NOT every interface.
+    // PORTIER_BIND=0.0.0.0 restores the old behaviour for setups with no proxy.
+    bind := env("PORTIER_BIND")
+    if bind == "" { bind = "127.0.0.1" }
+    write(2, "{\"event\":\"listening\",\"bind\":\"" + bind + "\",\"port\":" + str(port) + "}\n")
+    if bind == "0.0.0.0" {
+        serve(port, func(req) { return handle(req) })
+        return
+    }
+    serve_on(bind, port, func(req) { return handle(req) })
 }

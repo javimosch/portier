@@ -393,11 +393,18 @@ func scheme(req) (s) {
 func client_ip(req) (ip) {
     ip = req.remote
     if machweb_trust_proxy == 1 {
-        xf := header(req, "x-forwarded-for")
-        if xf != "" {
-            ci := index(xf, ",")
-            if ci >= 0 { xf = substr(xf, 0, ci) }   // left-most = original client
-            ip = trim(xf)
+        // Honour X-Forwarded-For ONLY when the socket peer is the trusted proxy.
+        // The left-most entry is whatever the client typed, so if the port is
+        // reachable directly an attacker picks their own rate-limit key and every
+        // limit keyed on client_ip becomes decorative. Falling back to req.remote
+        // means a direct hit is rate-limited by its real address instead.
+        if ip == "127.0.0.1" || ip == "::1" || ip == "localhost" {
+            xf := header(req, "x-forwarded-for")
+            if xf != "" {
+                ci := index(xf, ",")
+                if ci >= 0 { xf = substr(xf, 0, ci) }   // left-most = original client
+                ip = trim(xf)
+            }
         }
     }
 }
@@ -535,6 +542,25 @@ func machweb_handle(conn, handler) {
 }
 
 // serve runs the HTTP server. Each connection is handled in its own goroutine.
+// serve_on is serve() bound to a SPECIFIC address. listen(port) hardcodes
+// INADDR_ANY, so a service behind a reverse proxy is still reachable from the
+// whole internet on its raw port — which bypasses TLS, any proxy-level auth,
+// and (via a forged X-Forwarded-For) every rate limit. Bind the loopback the
+// proxy actually connects to and the raw port stops being an entrance.
+func serve_on(host, port, handler) {
+    server := listen_on(host, port)
+    if server < 0 {
+        write(2, "{\"error\":\"cannot bind " + host + ":" + str(port) + "\"}\n")
+        exit(1)
+    }
+    println("machweb on http://" + host + ":" + str(port))
+    flush()
+    for {
+        conn := accept(server)
+        go machweb_handle(conn, handler)
+    }
+}
+
 func serve(port, handler) {
     server := listen(port)
     println("machweb on http://localhost:" + str(port))

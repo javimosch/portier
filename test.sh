@@ -684,4 +684,63 @@ while [ $ri -lt 6 ]; do
 done
 [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$B/v1/apps" -d '{"redirect_uris":"http://127.0.0.1:9999/r10"}')" = "429" ] || fail rate-limit; ok "app registration rate-limited at 10/h/IP"
 
+
+# --- hardening regressions (P2..P6) ---------------------------------------
+# Each of these covers a hole found in the 2026-09-22 review of the public
+# surface. They use distinct X-Forwarded-For values so every check gets its own
+# rate-limit bucket (the loopback peer IS the trusted hop, so XFF is honoured).
+
+# P6: "no such app" and "redirect_uri not registered" must be indistinguishable,
+# or /auth becomes an oracle for which app_ids exist.
+E1=$(curl -s "$B/auth/app_nope/demo?redirect_uri=http%3A%2F%2F127.0.0.1%3A9999%2Fdone" | grep -oE 'portier: [^<]*')
+E2=$(curl -s "$B/auth/$AID/demo?redirect_uri=http%3A%2F%2Fevil.test%2Fcb" | grep -oE 'portier: [^<]*')
+[ -n "$E1" ] && [ "$E1" = "$E2" ] || fail enum-oracle; ok "unknown app and bad redirect_uri are indistinguishable"
+
+# P3: the unauthenticated feedback intake is an INSERT; without a limit it is a
+# disk-fill primitive against the DB holding the OAuth client secrets.
+fi=0
+while [ $fi -lt 20 ]; do
+  curl -s -o /dev/null -X POST "$B/v1/feedback" -H 'X-Forwarded-For: 198.18.1.1' -d '{"message":"f'$fi'"}'
+  fi=$((fi+1))
+done
+[ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$B/v1/feedback" -H 'X-Forwarded-For: 198.18.1.1' -d '{"message":"over"}')" = "429" ] || fail fb-rate; ok "feedback rate-limited at 20/h/IP"
+
+# P4: app_id + redirect_uri are public, and each successful auth is metered
+# against the app's wallet — cap how fast one address can drive another app's bill.
+RA=$(curl -sf -X POST "$B/v1/apps" -H 'X-Forwarded-For: 198.18.2.1' -d '{"redirect_uris":"http://127.0.0.1:9999/done"}')
+RAID=$(echo "$RA" | sed -n 's/.*"app_id":"\([^"]*\)".*/\1/p')
+RSEC=$(echo "$RA" | sed -n 's/.*"app_secret":"\([^"]*\)".*/\1/p')
+curl -sf -X POST "$B/v1/apps/provider" -H "Authorization: Bearer $RSEC" -d '{"kind":"demo"}' >/dev/null || fail as-prov
+ai=0
+while [ $ai -lt 60 ]; do
+  curl -s -o /dev/null "$B/auth/$RAID/demo?redirect_uri=http%3A%2F%2F127.0.0.1%3A9999%2Fdone" -H 'X-Forwarded-For: 198.18.2.2'
+  ai=$((ai+1))
+done
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$B/auth/$RAID/demo?redirect_uri=http%3A%2F%2F127.0.0.1%3A9999%2Fdone" -H 'X-Forwarded-For: 198.18.2.2')" = "400" ] || fail as-rate; ok "auth start rate-limited at 60/h per app+IP"
+
+# P5: abandoned authorization codes are only DELETEd on redemption, so they used
+# to accumulate forever. A completed login must sweep them.
+sqlite3_retry "$DB" "INSERT INTO codes(code,app_id,identity,expires_at) VALUES('pc_stale_test','$AID','{}',1);"
+SCB=$(curl -s -o /dev/null -w '%{redirect_url}' "$B/auth/$AID/demo?redirect_uri=http%3A%2F%2F127.0.0.1%3A9999%2Fdone" -H 'X-Forwarded-For: 198.18.3.1')
+curl -s -o /dev/null "$SCB" || true
+[ "$(sqlite3_retry "$DB" "SELECT count(*) FROM codes WHERE code='pc_stale_test';")" = "0" ] || fail purge; ok "expired authorization codes are purged on login"
+
+# P2: X-Forwarded-For must be honoured ONLY from the trusted proxy hop. Needs a
+# non-loopback address to connect from; skipped where the host has none.
+LANIP=$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)
+if [ -n "$LANIP" ]; then
+  XPORT=18796
+  PORTIER_BIND=0.0.0.0 PORTIER_DB="$DB" ./portier serve -port $XPORT >/dev/null 2>&1 &
+  XPID=$!
+  sleep 1
+  xi=0; XTRIP=""
+  while [ $xi -lt 12 ]; do
+    XC=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://$LANIP:$XPORT/v1/apps" -H "X-Forwarded-For: 198.51.100.$xi" -d '{}')
+    [ "$XC" = "429" ] && XTRIP="yes"
+    xi=$((xi+1))
+  done
+  kill $XPID 2>/dev/null || true
+  [ -n "$XTRIP" ] || fail xff-spoof; ok "forged X-Forwarded-For from a non-proxy peer cannot reset the limit"
+fi
+
 echo "ALL $P TESTS PASSED"

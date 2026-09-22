@@ -68,11 +68,30 @@ func handle_auth_start(req) (res) {
 
     db := db_open()
     if db == 0 { res = html_error("db error")  return }
+    // One message for "no such app" and "redirect_uri not registered": telling
+    // them apart turns this route into an oracle for which app_ids exist, and a
+    // caller holding a real login link can distinguish neither case anyway.
     a, aok := app_by_id(db, app_id)
-    if aok == 0 { sqlite_close(db)  res = html_error("unknown app")  return }
+    if aok == 0 {
+        sqlite_close(db)
+        res = html_error("this login link is not valid for any registered app (unknown app, or a redirect_uri that is not registered — open-redirect blocked)")
+        return
+    }
     if app_redirect == "" || redirect_registered(a, app_redirect) == 0 {
         sqlite_close(db)
-        res = html_error("redirect_uri is not registered for this app (open-redirect blocked)")
+        res = html_error("this login link is not valid for any registered app (unknown app, or a redirect_uri that is not registered — open-redirect blocked)")
+        return
+    }
+
+    // P4 brake: app_id and a registered redirect_uri are both public (they sit in
+    // every login link), and each SUCCESSFUL auth is metered against the app's
+    // wallet — so anyone could drive another app's bill. Loss is already bounded
+    // by the wallet balance and billing_blocks_login; this caps the rate. The
+    // real defence for a private app is the email allowlist, which is checked
+    // BEFORE meter_auth so refused logins are never billed.
+    if rate_allow(db, "as:" + app_id + ":" + client_ip(req), 3600, 60) == false {
+        sqlite_close(db)
+        res = html_error("too many login attempts for this app from your address — wait and try again")
         return
     }
     if billing_blocks_login(a) == 1 {
@@ -215,6 +234,7 @@ func handle_callback(req) (res) {
 
     // meter this successful auth (best-effort billing, never blocks the user)
     meter_auth(db, app_id)
+    purge_stale(db)
 
     // mint a one-time code the app exchanges server-side for the identity
     pcode := "pc_" + newid()
