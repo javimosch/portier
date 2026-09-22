@@ -394,10 +394,11 @@ func client_ip(req) (ip) {
     ip = req.remote
     if machweb_trust_proxy == 1 {
         // Honour X-Forwarded-For ONLY when the socket peer is the trusted proxy.
-        // The left-most entry is whatever the client typed, so if the port is
-        // reachable directly an attacker picks their own rate-limit key and every
-        // limit keyed on client_ip becomes decorative. Falling back to req.remote
-        // means a direct hit is rate-limited by its real address instead.
+        // The left-most entry is whatever the client typed, so a caller able to
+        // reach the port directly would otherwise choose its own rate-limit key
+        // and every limit keyed on client_ip becomes decorative. Verified
+        // against a live service: 12/12 rate-limited requests accepted while
+        // rotating a forged header, where a fixed value tripped at 11.
         if ip == "127.0.0.1" || ip == "::1" || ip == "localhost" {
             xf := header(req, "x-forwarded-for")
             if xf != "" {
@@ -436,10 +437,20 @@ func read_request(conn) (raw) {
     if sep >= 0 {
         clen := content_length(substr(raw, 0, sep))
         body_start := sep + 4
-        for len(raw) - body_start < clen {
-            chunk := read(conn)
-            if chunk == "" { break }            // connection closed early
-            raw = raw + chunk
+        have := len(raw) - body_start
+        if have < clen {
+            // Collect the chunks and join ONCE. `raw = raw + chunk` in this loop
+            // is quadratic: a 1.5 MB body arriving in 64 kB reads allocates ~24
+            // ever-larger copies (~18 MB), and in a long-lived server that all
+            // stays on the goroutine's arena. join() allocates the result once.
+            parts := []string{raw}
+            while have < clen {
+                chunk := read(conn)
+                if chunk == "" { break }        // connection closed early
+                parts = append(parts, chunk)
+                have = have + len(chunk)
+            }
+            raw = join(parts, "")
         }
     }
 }
@@ -456,10 +467,33 @@ func read_request_bytes(conn) (raw) {
         // (no buffering, no OOM) rather than draining megabytes off the socket.
         if machweb_max_body == 0 || clen <= machweb_max_body {
             body_start := sep + 4
-            for len(raw) - body_start < clen {
-                chunk := read_bytes(conn)
-                if len(chunk) == 0 { break }    // connection closed early (or read timeout)
-                raw = bytes_concat(raw, chunk)
+            // Same quadratic trap as read_request, in bytes: merge the chunks
+            // pairwise (each pass halves the count) so the total copying is
+            // O(n log n) instead of O(n^2). bytes has no join().
+            have := len(raw) - body_start
+            if have < clen {
+                parts := []bytes{}
+                parts = append(parts, raw)
+                while have < clen {
+                    chunk := read_bytes(conn)
+                    if len(chunk) == 0 { break } // connection closed early (or read timeout)
+                    parts = append(parts, chunk)
+                    have = have + len(chunk)
+                }
+                while len(parts) > 1 {
+                    merged := []bytes{}
+                    i := 0
+                    while i < len(parts) {
+                        if i + 1 < len(parts) {
+                            merged = append(merged, bytes_concat(parts[i], parts[i+1]))
+                        } else {
+                            merged = append(merged, parts[i])
+                        }
+                        i = i + 2
+                    }
+                    parts = merged
+                }
+                raw = parts[0]
             }
         }
     }
@@ -544,9 +578,14 @@ func machweb_handle(conn, handler) {
 // serve runs the HTTP server. Each connection is handled in its own goroutine.
 // serve_on is serve() bound to a SPECIFIC address. listen(port) hardcodes
 // INADDR_ANY, so a service behind a reverse proxy is still reachable from the
-// whole internet on its raw port — which bypasses TLS, any proxy-level auth,
-// and (via a forged X-Forwarded-For) every rate limit. Bind the loopback the
-// proxy actually connects to and the raw port stops being an entrance.
+// whole internet on its raw port — which bypasses the proxy's TLS, any
+// proxy-level auth, and (via a forged X-Forwarded-For) every rate limit keyed
+// on client_ip. Bind the loopback the proxy actually connects to and the raw
+// port stops being an entrance.
+//
+// A bind failure EXITS rather than returning: a service that cannot listen has
+// not started, and returning quietly would let it report success to its
+// supervisor while serving nothing.
 func serve_on(host, port, handler) {
     server := listen_on(host, port)
     if server < 0 {
@@ -563,6 +602,10 @@ func serve_on(host, port, handler) {
 
 func serve(port, handler) {
     server := listen(port)
+    if server < 0 {
+        println("machweb: cannot listen on port " + str(port) + " (already in use?)")
+        return
+    }
     println("machweb on http://localhost:" + str(port))
     flush() // otherwise this line never reaches a log file/pipe (nohup, systemd, Docker) — see the stdout-buffering gotcha
     for {
@@ -665,6 +708,10 @@ func serve_tls(port, certfile, keyfile, handler) {
         return
     }
     server := listen(port)
+    if server < 0 {
+        println("machweb: cannot listen on port " + str(port) + " (already in use?)")
+        return
+    }
     println("machweb on https://localhost:" + str(port))
     flush() // otherwise this line never reaches a log file/pipe (nohup, systemd, Docker) — see the stdout-buffering gotcha
     for {
