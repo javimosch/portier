@@ -132,6 +132,24 @@ func exchange_code(pr, code, cb) (identity, err) {
     }
     atv, aterr := json_get(resp, ".access_token")
     if aterr != "" {
+        // OAuth 2.0 says the token response is JSON, but GitHub answers
+        // application/x-www-form-urlencoded unless Accept says otherwise — and our HTTP
+        // client already sets its own `Accept: */*`, so GitHub sees TWO Accept headers and
+        // may honour the wildcard. That is exactly how a working configuration produced
+        // "no access_token from IdP" intermittently. Read the form shape too rather than
+        // depending on which duplicate header wins.
+        if index(resp, "access_token=") >= 0 {
+            for _, kv := range split(resp, "&") {
+                eq := index(kv, "=")
+                if eq > 0 && substr(kv, 0, eq) == "access_token" {
+                    at2 := url_decode(substr(kv, eq + 1, len(kv)))
+                    if at2 != "" {
+                        identity, err = finish_userinfo(pr, at2)
+                        return
+                    }
+                }
+            }
+        }
         // GitHub (and others) answer HTTP 200 with a JSON error body — bad_verification_code,
         // redirect_uri_mismatch, incorrect_client_credentials. Swallowing that turns a
         // precisely-diagnosable misconfiguration into "no access_token from IdP", which sends
@@ -147,11 +165,55 @@ func exchange_code(pr, code, cb) (identity, err) {
         return
     }
     at := unq(atv)
-    // userinfo
+    identity, err = finish_userinfo(pr, at)
+}
+
+// finish_userinfo fetches the profile with a bearer token and normalizes it.
+func finish_userinfo(pr, at) (identity, err) {
+    identity = ""
+    err = ""
     uhdrs := []string{"authorization: Bearer " + at, "accept: application/json", "user-agent: portier"}
     ustatus, uresp, uherr := http_request("GET", pr.userinfo_url, uhdrs, "")
     if uherr != "" || ustatus != 200 { err = "userinfo failed (status " + str(ustatus) + ")"  return }
     identity = normalize_identity(pr, uresp)
+    // GitHub's /user returns email:null unless the operator made their address PUBLIC, so a
+    // perfectly good login yields an identity with no email and the consuming app has to
+    // invent a placeholder. The user:email scope exists for this; ask the endpoint that
+    // actually knows.
+    if pr.kind == "github" {
+        evv, everr := json_get(identity, ".email")
+        if everr != "" || unq(evv) == "" {
+            e := github_primary_email(at)
+            if e != "" {
+                sv, _ := json_get(identity, ".sub")
+                nv, _ := json_get(identity, ".name")
+                identity = "{\"sub\":" + json(unq(sv)) + ",\"email\":" + json(e) + ",\"name\":" + json(unq(nv)) + ",\"provider\":" + json(pr.name) + "}"
+            }
+        }
+    }
+}
+
+type GhEmail struct {
+    email    string
+    primary  bool
+    verified bool
+}
+
+// github_primary_email returns the account's primary VERIFIED address, or "" when the token
+// lacks user:email or nothing qualifies. Verified matters: an unverified address is a claim
+// the IdP has not checked, and consuming apps key trust decisions on it.
+func github_primary_email(at) (email) {
+    email = ""
+    hdrs := []string{"authorization: Bearer " + at, "accept: application/json", "user-agent: portier"}
+    status, resp, herr := http_request("GET", "https://api.github.com/user/emails", hdrs, "")
+    if herr != "" || status != 200 { return }
+    list := parse(resp, []GhEmail{})
+    for _, e := range list {
+        if e.primary && e.verified { email = e.email  return }
+    }
+    for _, e := range list {
+        if e.verified { email = e.email  return }
+    }
 }
 
 // normalize_identity maps provider-specific userinfo into {sub,email,name,provider,raw}
