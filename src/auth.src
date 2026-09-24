@@ -131,7 +131,21 @@ func exchange_code(pr, code, cb) (identity, err) {
         return
     }
     atv, aterr := json_get(resp, ".access_token")
-    if aterr != "" { err = "no access_token from IdP"  return }
+    if aterr != "" {
+        // GitHub (and others) answer HTTP 200 with a JSON error body — bad_verification_code,
+        // redirect_uri_mismatch, incorrect_client_credentials. Swallowing that turns a
+        // precisely-diagnosable misconfiguration into "no access_token from IdP", which sends
+        // the operator hunting. Surface what the IdP actually said.
+        ev, eerr := json_get(resp, ".error")
+        if eerr == "" {
+            err = "IdP rejected the code: " + unq(ev)
+            dv, derr := json_get(resp, ".error_description")
+            if derr == "" { err = err + " (" + unq(dv) + ")" }
+            return
+        }
+        err = "no access_token from IdP"
+        return
+    }
     at := unq(atv)
     // userinfo
     uhdrs := []string{"authorization: Bearer " + at, "accept: application/json", "user-agent: portier"}
