@@ -76,6 +76,10 @@ func charge_block(db, app_id, a) (charged) {
 // all owed blocks in one callback (best-effort; never blocks the in-flight login).
 func meter_auth(db, app_id) {
     sqlite_exec(db, "UPDATE apps SET auth_count = auth_count + 1 WHERE id = ?", []string{app_id})
+    // An exempt app is still counted (the operator wants to see usage) but never charged.
+    // Comped apps are ours: dogfooding, demos, an operator's own product.
+    ex, exok := app_by_id(db, app_id)
+    if exok == 1 && ex.billing == "exempt" { return }
     // cap catch-up loops so a pathological backlog cannot stall the callback
     loops := 0
     while loops < 20 {
@@ -93,5 +97,7 @@ func meter_auth(db, app_id) {
 // new logins (the owner must fund) — but never interrupts an in-flight one.
 func billing_blocks_login(a) (blocked) {
     blocked = 0
+    // 'exempt' is never blocked and never billed — set it with `portier app-billing`.
+    if a.billing == "exempt" { return }
     if a.billing == "past_due" && a.auth_count >= free_auths() { blocked = 1 }
 }

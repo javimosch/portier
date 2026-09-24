@@ -676,6 +676,31 @@ curl -sf -X DELETE "$B/v1/apps/provider" -H "Authorization: Bearer $SEC" -d '{"n
 ./portier app-new -name ops -redirect https://x/y | grep -q '"ok":true' || fail cli-new; ok "cli app-new"
 ./portier stats | grep -q '"auths"' || fail cli-stats; ok "cli stats"
 
+# --- billing: exempt is never metered and never blocked ---
+# A comped app (ours: dogfooding, demos, our own products) must keep working past the free
+# tier with no wallet at all — the state a normal app would be blocked in.
+./portier app-billing -app "$AID" -state exempt | grep -q '"billing":"exempt"' || fail cli-exempt; ok "cli app-billing sets exempt"
+./portier app-billing -app app_doesnotexist -state exempt >/dev/null 2>&1 && fail cli-exempt-unknown; ok "app-billing rejects an unknown app"
+./portier app-billing -app "$AID" -state bogus >/dev/null 2>&1 && fail cli-exempt-state; ok "app-billing rejects a state it does not own"
+
+# Past the free tier, no wallet, and previously past_due: a normal app is blocked here.
+sqlite3_retry "$DB" "UPDATE apps SET billing='exempt', auth_count=500, blocks_charged=0, wallet_token='' WHERE id='$AID';"
+LOCex=$(curl -s -o /dev/null -w '%{redirect_url}' "$B/auth/$AID/demo?redirect_uri=http%3A%2F%2F127.0.0.1%3A9999%2Fdone&state=ex")
+echo "$LOCex" | grep -q "/cb/demo" || fail exempt-block; ok "exempt app can start a login past the free tier with no wallet"
+
+BLOCKSex=$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC" | J "['blocks_charged']")
+oneauth
+MEex=$(curl -sf "$B/v1/apps/me" -H "Authorization: Bearer $SEC")
+[ "$(echo "$MEex" | J "['blocks_charged']")" = "$BLOCKSex" ] || fail exempt-charged; ok "exempt app is never charged"
+[ "$(echo "$MEex" | J "['billing']")" = "exempt" ] || fail exempt-kept; ok "metering does not knock an exempt app out of exempt"
+[ "$(echo "$MEex" | J "['auth_count']")" -gt 500 ] || fail exempt-count; ok "exempt auths are still counted (usage stays visible)"
+
+# Restoring normal billing puts the app back under the meter.
+./portier app-billing -app "$AID" -state ok | grep -q '"billing":"ok"' || fail cli-exempt-off; ok "cli app-billing restores normal billing"
+sqlite3_retry "$DB" "UPDATE apps SET billing='past_due', auth_count=500 WHERE id='$AID';"
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$B/auth/$AID/demo?redirect_uri=http%3A%2F%2F127.0.0.1%3A9999%2Fdone&state=ex2")" = "400" ] || fail exempt-restore; ok "a restored app is blocked again when past_due"
+sqlite3_retry "$DB" "UPDATE apps SET billing='ok', auth_count=0, blocks_charged=0 WHERE id='$AID';"
+
 # app registration rate limit (10/h/IP) — last: 4 HTTP creates already (noredir, main, cross-app, nowallet)
 ri=0
 while [ $ri -lt 6 ]; do

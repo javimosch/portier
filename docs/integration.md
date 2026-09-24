@@ -156,6 +156,22 @@ No per-seat SSO subscription. Metering is per **successful** authentication:
 | `past_due` + free tier exhausted | No (in-flight completes) | **Yes** — fund wallet |
 | IdP token/userinfo exchange fails | N/A (not metered) | No |
 | Empty/missing `sub` in userinfo | N/A (not metered) | No |
+| `billing = exempt` | No | No — never metered, never blocked |
+
+### Comped apps (`billing = exempt`)
+
+An operator can exempt an app from metering entirely — for dogfooding, a demo, or a product
+they own themselves. Exempt apps still **count** auths, so usage stays visible in
+`/v1/apps/me`; they are simply never charged and never blocked, whatever the wallet says.
+
+```sh
+portier app-billing -app app_xxx -state exempt   # comp it
+portier app-billing -app app_xxx -state ok       # back under the meter
+```
+
+There is deliberately **no HTTP endpoint** for this. The trust boundary is "can read the
+sqlite file" — the same as `apps` and `stats` — so comping an app never becomes a remotely
+reachable privilege. `past_due` is set by the charge path and is not a state a human sets.
 
 Fund or refresh the wallet:
 

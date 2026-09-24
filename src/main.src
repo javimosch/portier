@@ -19,6 +19,8 @@ func main() {
         cmd_app_new(a)
     } else if cmd == "apps" {
         cmd_apps(a)
+    } else if cmd == "app-billing" {
+        cmd_app_billing(a)
     } else if cmd == "stats" {
         cmd_stats()
     } else if cmd == "guide" {

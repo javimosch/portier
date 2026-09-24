@@ -87,11 +87,12 @@ func help_text() (h) {
         "  serve [-port 8797]        run the HTTP service ($PORT respected)\n" +
         "  app-new -name x -redirect https://..   register an app (operator)\n" +
         "  apps [-limit 50]          list apps as JSON\n" +
+        "  app-billing -app app_x -state exempt|ok   comp an app (never metered/blocked) or restore billing\n" +
         "  stats                     totals: apps, auths, providers\n" +
         "  guide | version | help | help-json\n\n" +
         "env: PORTIER_DB PORTIER_PUBLIC_URL PORTIER_SECRET PORTIER_KEK PORTIER_FREE_AUTHS PORTIER_BLOCK PEAGE_MERCHANT_KEY PEAGE_URL\n"
 }
 
 func help_json() (h) {
-    h = "{\"name\":\"portier\",\"version\":\"" + app_version() + "\",\"commands\":[\"serve\",\"app-new\",\"apps\",\"stats\",\"guide\",\"version\",\"help\",\"help-json\"]}"
+    h = "{\"name\":\"portier\",\"version\":\"" + app_version() + "\",\"commands\":[\"serve\",\"app-new\",\"apps\",\"app-billing\",\"stats\",\"guide\",\"version\",\"help\",\"help-json\"]}"
 }

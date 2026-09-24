@@ -71,6 +71,29 @@ func cmd_apps(a) {
     out_ok(rows)
 }
 
+// cmd_app_billing sets an app's billing state. The only states an operator sets by hand are
+// 'exempt' (never metered, never blocked — comped apps: dogfooding, demos, our own products)
+// and 'ok' (back to normal billing). 'past_due' is set by the charge path, not by a human.
+//
+// Local DB access only, deliberately: there is no HTTP surface for this. The trust boundary is
+// "can read the sqlite file", the same boundary as `apps` and `stats`, so comping an app does
+// not become a remotely reachable privilege.
+func cmd_app_billing(a) {
+    app_id := opt(a, "-app", "")
+    state := opt(a, "-state", "")
+    if app_id == "" || state == "" { fail(80, "usage: app-billing -app app_xxx -state exempt|ok") }
+    if state != "exempt" && state != "ok" { fail(80, "state must be 'exempt' or 'ok' ('past_due' is set by the charge path)") }
+    db := need_db()
+    rows := sqlite_query(db, "SELECT id FROM apps WHERE id = ?", []string{app_id})
+    if rows == "[]" {
+        sqlite_close(db)
+        fail(90, "no such app: " + app_id)
+    }
+    sqlite_exec(db, "UPDATE apps SET billing = ? WHERE id = ?", []string{state, app_id})
+    sqlite_close(db)
+    out_ok("{\"app_id\":\"" + app_id + "\",\"billing\":\"" + state + "\"}")
+}
+
 func cmd_stats() {
     db := need_db()
     rows := sqlite_query(db, "SELECT (SELECT COUNT(*) FROM apps) AS apps, (SELECT COALESCE(SUM(auth_count),0) FROM apps) AS auths, (SELECT COALESCE(SUM(blocks_charged),0) FROM apps) AS blocks_billed, (SELECT COUNT(*) FROM providers) AS providers", []string{})
