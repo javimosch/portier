@@ -5,60 +5,235 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>portier — SSO for your app in one redirect, pay-per-auth</title>
 <meta name="description" content="Add Login-with-Google/GitHub/any-OIDC to your app without implementing OAuth. 100 free auths, then 1 EUR per 100 via peage. No per-seat SSO tax.">
+<meta name="theme-color" content="#0e3b2e">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:opsz,wght@6..96,500;6..96,700&family=Albert+Sans:wght@400;500;600;700&family=Red+Hat+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-:root{--bg:#0a0a0c;--panel:#101014;--line:#1f1f26;--fg:#e2e8f0;--dim:#8b93a3;--acc:#a78bfa}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;line-height:1.55}
-main{max-width:820px;margin:0 auto;padding:3rem 1.25rem}
-h1{font-size:2rem;margin:.2rem 0}h1 em{color:var(--acc);font-style:normal}
-h2{color:var(--acc);font-size:1.05rem;margin-top:2.4rem}
-p{color:var(--dim)}strong{color:var(--fg)}
-pre{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px;overflow-x:auto;font-size:13px}
-.tag{display:inline-block;border:1px solid var(--line);border-radius:99px;padding:2px 10px;font-size:12px;color:var(--dim);margin-right:6px}
-a{color:var(--acc)}footer{margin-top:3rem;color:var(--dim);font-size:12.5px}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}@media(max-width:640px){.grid{grid-template-columns:1fr}}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:1rem}
-.card h3{margin:0 0 .4rem;color:var(--fg);font-size:.95rem}.card p{font-size:13px;margin:.3rem 0}
+:root{--ivory:#f7f3ea;--ivory-2:#efe8d9;--card:#fffdf8;--em:#0e3b2e;--em-2:#155a45;--em-3:#0a2b22;--brass:#c9a35a;--brass-2:#b08a3e;--ink:#1c2420;--ink-2:#46514b;--muted:#7a847e;--line:rgba(14,59,46,.14);
+  --serif:'Bodoni Moda',Georgia,serif;--sans:'Albert Sans',system-ui,sans-serif;--mono:'Red Hat Mono',ui-monospace,Menlo,monospace;--ease:cubic-bezier(.32,.72,0,1)}
+*{box-sizing:border-box}
+html{background:var(--ivory);scroll-behavior:smooth}
+body{margin:0;background:var(--ivory);color:var(--ink);font-family:var(--sans);font-size:16.5px;line-height:1.62;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+a{color:var(--em-2);text-underline-offset:3px}
+code,pre{font-family:var(--mono)}
+.wrap{max-width:1120px;margin:0 auto;padding:0 28px}
+
+.top{border-bottom:1px solid var(--line)}
+.top .wrap{display:flex;align-items:center;justify-content:space-between;height:70px}
+.brand{display:flex;align-items:center;gap:12px;text-decoration:none;color:var(--em);font-family:var(--serif);font-weight:700;font-size:25px;letter-spacing:.01em}
+.brand .key{width:30px;height:30px;border-radius:50%;border:1.5px solid var(--brass);display:grid;place-items:center;color:var(--brass-2)}
+.brand .key svg{width:16px;height:16px}
+.top nav{display:flex;gap:6px;font-size:14.5px}
+.top nav a{text-decoration:none;color:var(--ink-2);padding:7px 12px;border-radius:999px;transition:background .3s var(--ease),color .3s}
+.top nav a:hover{background:var(--ivory-2);color:var(--em)}
+
+.hero{display:grid;grid-template-columns:1fr 1fr;gap:60px;align-items:center;padding:80px 0 96px}
+.hero>*{min-width:0}
+.tags{display:flex;flex-wrap:wrap;gap:8px}
+.tags span{font-family:var(--mono);font-size:12px;padding:4px 11px;border-radius:999px;border:1px solid var(--line);color:var(--ink-2);background:var(--card)}
+.tags span:first-child{background:var(--em);color:var(--ivory);border-color:var(--em)}
+h1{font-family:var(--serif);font-weight:500;font-size:clamp(44px,5.2vw,74px);line-height:1.02;letter-spacing:-.02em;margin:26px 0 24px;color:var(--em-3)}
+h1 em{font-style:italic;color:var(--brass-2)}
+.lede{font-size:18px;color:var(--ink-2);margin:0;max-width:32em}
+.lede strong{color:var(--ink)}
+.cta{display:flex;gap:12px;flex-wrap:wrap;margin-top:32px}
+.btn{display:inline-flex;align-items:center;gap:10px;text-decoration:none;font-weight:600;font-size:15px;padding:14px 22px;border-radius:999px;transition:transform .45s var(--ease),background .3s,box-shadow .3s,color .3s}
+.btn:active{transform:scale(.97)}
+.btn-em{background:var(--em);color:var(--ivory);box-shadow:0 14px 28px -16px rgba(14,59,46,.9)}
+.btn-em:hover{background:var(--em-2);transform:translateY(-1px)}
+.btn-line{color:var(--em);box-shadow:inset 0 0 0 1.5px var(--brass)}
+.btn-line:hover{background:var(--card)}
+
+/* the door */
+.door{position:relative;border-radius:200px 200px 22px 22px;background:linear-gradient(180deg,var(--em-2),var(--em-3));padding:16px;box-shadow:0 50px 90px -50px rgba(10,43,34,.8)}
+.door::before{content:"";position:absolute;inset:8px;border-radius:192px 192px 16px 16px;border:1px solid rgba(201,163,90,.55);pointer-events:none}
+.door-in{position:relative;border-radius:184px 184px 12px 12px;background:var(--card);padding:96px 26px 26px;min-height:500px;overflow:hidden}
+.door .plate{position:absolute;left:50%;top:26px;transform:translateX(-50%);font-family:var(--serif);font-weight:700;color:var(--em);font-size:15px;letter-spacing:.24em;text-transform:uppercase;border-bottom:1px solid var(--brass);padding:0 6px 4px}
+.steps{display:flex;justify-content:center;gap:8px;margin-bottom:22px}
+.steps i{width:28px;height:4px;border-radius:2px;background:var(--ivory-2);transition:background .4s var(--ease)}
+.steps i.on{background:var(--brass)}
+.stage{position:relative;height:300px}
+.st{position:absolute;inset:0;opacity:0;transform:translateY(10px);transition:opacity .55s var(--ease),transform .55s var(--ease);pointer-events:none}
+.st.on{opacity:1;transform:none}
+.cap{font-family:var(--mono);font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:12px;text-align:center}
+.url{font-family:var(--mono);font-size:12.5px;background:var(--ivory);border:1px solid var(--line);border-radius:10px;padding:12px 14px;color:var(--ink-2);word-break:break-all}
+.url b{color:var(--em-2);font-weight:500}
+.app{margin-top:16px;border:1px solid var(--line);border-radius:14px;padding:18px;text-align:center}
+.app .t{font-weight:700;margin-bottom:10px}
+.app .fake{display:inline-block;background:var(--em);color:var(--ivory);padding:10px 18px;border-radius:999px;font-weight:600;font-size:14px}
+.prov{display:grid;gap:10px;margin-top:6px}
+.prov div{display:flex;align-items:center;gap:12px;border:1px solid var(--line);border-radius:12px;padding:12px 14px;font-weight:600;font-size:14.5px;transition:border-color .4s,background .4s}
+.prov div.pick{border-color:var(--brass);background:#fbf5e8}
+.prov svg{width:20px;height:20px;flex:none}
+.pass{border-radius:16px;background:var(--em);color:var(--ivory);padding:18px 18px 16px;position:relative;box-shadow:0 20px 40px -24px rgba(10,43,34,.9)}
+.pass .seal{position:absolute;right:14px;top:-16px;width:56px;height:56px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#e7cf93,var(--brass) 55%,var(--brass-2));color:var(--em-3);display:grid;place-items:center;font-family:var(--serif);font-weight:700;font-size:10px;letter-spacing:.08em;text-transform:uppercase;text-align:center;line-height:1.1;box-shadow:0 8px 16px -8px rgba(0,0,0,.5)}
+.pass .h{font-family:var(--serif);font-size:19px;margin-bottom:10px}
+.pass pre{margin:0;font-size:12.5px;line-height:1.7;color:#d7e6de;white-space:pre-wrap}
+.pass pre .k{color:var(--brass)}
+.pass .ok{margin-top:12px;font-family:var(--mono);font-size:11.5px;color:#9fd3b8}
+
+/* sections */
+section{padding:96px 0 0}
+.kick{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--brass-2);margin:0 0 14px;display:flex;align-items:center;gap:12px}
+.kick::before{content:"";width:28px;height:1px;background:var(--brass)}
+h2{font-family:var(--serif);font-weight:500;font-size:clamp(34px,4vw,52px);line-height:1.05;letter-spacing:-.015em;margin:0 0 34px;color:var(--em-3);max-width:17em}
+h2 em{font-style:italic;color:var(--brass-2)}
+.term{background:var(--em-3);color:#d7e6de;border-radius:18px;overflow:hidden;box-shadow:0 40px 80px -52px rgba(10,43,34,.8)}
+.term-top{display:flex;align-items:center;gap:8px;padding:12px 18px;border-bottom:1px solid rgba(201,163,90,.25);font-family:var(--mono);font-size:12px;color:#8fb3a3}
+.term-top i{width:10px;height:10px;border-radius:50%;background:rgba(255,255,255,.14)}
+.term-top span{margin-left:8px}
+.term pre{margin:0;padding:22px 24px 26px;font-size:13.5px;line-height:1.8;overflow-x:auto}
+.term .c{color:#7fa293}.term .k{color:var(--brass)}.term .g{color:#9fe0bf}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:32px 30px}
+.card .n{font-family:var(--serif);font-style:italic;font-size:40px;line-height:1;color:var(--brass)}
+.card h3{font-family:var(--serif);font-weight:500;font-size:26px;color:var(--em-3);margin:14px 0 10px}
+.card p{margin:0;color:var(--ink-2)}
+.card em{color:var(--em-2)}
+.providers{display:grid;grid-template-columns:1.1fr .9fr;gap:40px;align-items:start}
+.providers p{color:var(--ink-2);margin:0;font-size:17px}
+.providers strong{color:var(--ink)}
+.plist{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.plist span{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;font-weight:600;font-size:14.5px}
+.plist span i{width:8px;height:8px;border-radius:50%;background:var(--brass)}
+.plist span.soon{color:var(--muted);border-style:dashed}
+.plist span.soon i{background:var(--ivory-2)}
+
+footer{margin-top:110px;background:var(--em-3);color:#aac4b8}
+footer .wrap{padding-top:34px;padding-bottom:40px;font-size:14px;line-height:1.8}
+footer a{color:var(--brass)}
+
+.rv{opacity:0;transform:translateY(18px);transition:opacity .8s var(--ease),transform .8s var(--ease)}
+.rv.in{opacity:1;transform:none}
+@media (prefers-reduced-motion:reduce){.rv{opacity:1;transform:none;transition:none}.st{transition:none}}
+@media (max-width:960px){.hero,.two,.providers{grid-template-columns:1fr}.hero{gap:48px;padding:52px 0 64px}.top nav a.opt{display:none}}
+@media (max-width:560px){.wrap{padding:0 16px}.door-in{padding:84px 16px 18px;min-height:470px}.plist{grid-template-columns:1fr}.card{padding:26px 22px}}
 </style>
 <script defer src="https://vigie.intrane.fr/vigie.js"></script>
 </head>
 <body>
-<main>
-<div><span class="tag">agent-first</span><span class="tag">no per-seat tax</span><span class="tag">pay-per-auth</span><span class="tag">one static binary</span></div>
-<h1><em>portier</em> — SSO for your app in one redirect</h1>
-<p><strong>Add "Login with Google / GitHub / any OIDC provider" without implementing OAuth.</strong> portier brokers the authorization-code flow and hands your app back a verified identity. No per-seat SSO subscription — <strong>100 free auths, then 1&nbsp;EUR per 100 successful auths</strong>, funded by a <a href="https://peage.intrane.fr">peage</a> wallet. <strong>OSS</strong> binary (self-host) or this <strong>Intrane hosted</strong> instance (metered). Hostname = API + thin docs — not a separate marketing site.</p>
+<div class="top"><div class="wrap">
+  <a class="brand" href="/"><span class="key"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3M15 8l2 2"/></svg></span>portier</a>
+  <nav><a class="opt" href="#start">Quick start</a><a class="opt" href="#providers">Providers</a><a href="/llms.txt">llms.txt</a></nav>
+</div></div>
 
-<pre># 1. register your app
-curl -s -X POST https://portier.intrane.fr/v1/apps \
+<main class="wrap">
+  <header class="hero">
+    <div>
+      <div class="tags rv"><span>agent-first</span><span>no per-seat tax</span><span>pay-per-auth</span><span>one static binary</span></div>
+      <h1 class="rv">SSO for your app in <em>one redirect.</em></h1>
+      <p class="lede rv"><strong>Add "Login with Google / GitHub / any OIDC provider" without implementing OAuth.</strong> portier brokers the authorization-code flow and hands your app back a verified identity. No per-seat SSO subscription — <strong>100 free auths, then 1&nbsp;EUR per 100 successful auths</strong>, funded by a <a href="https://peage.intrane.fr">peage</a> wallet. <strong>OSS</strong> binary (self-host) or this <strong>Intrane hosted</strong> instance (metered). Hostname = API + thin docs — not a separate marketing site.</p>
+      <div class="cta rv"><a class="btn btn-em" href="#start">Register an app →</a><a class="btn btn-line" href="/llms.txt">Read the contract</a></div>
+    </div>
+
+    <div class="door rv" aria-hidden="true">
+      <div class="door-in">
+        <div class="plate">portier</div>
+        <div class="steps"><i id="s1"></i><i id="s2"></i><i id="s3"></i></div>
+        <div class="stage">
+          <div class="st" id="t1">
+            <div class="cap">1 · your app sends the guest to the door</div>
+            <div class="app"><div class="t">myapp.com</div><span class="fake">Sign in</span></div>
+            <div class="url" style="margin-top:16px">302 → https://portier.intrane.fr/<b>authorize</b>?app_id=app_…&amp;redirect_uri=https://myapp.com/auth/done</div>
+          </div>
+          <div class="st" id="t2">
+            <div class="cap">2 · the guest picks a provider</div>
+            <div class="prov">
+              <div id="pg"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2.1c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.8.1-.7.1-.7 1.2.1 1.9 1.3 1.9 1.3 1.1 1.9 2.9 1.3 3.6 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-6 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.3 4.7 18.3 5 18.3 5c.7 1.7.3 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.7-2.8 5.7-5.5 6 .4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .5z"/></svg>Continue with GitHub</div>
+              <div><svg viewBox="0 0 24 24"><path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.5h6.4a5.5 5.5 0 0 1-2.4 3.6v3h3.9c2.3-2.1 3.6-5.2 3.6-8.8z"/><path fill="#34A853" d="M12 24c3.2 0 6-1.1 7.9-2.9l-3.9-3c-1.1.7-2.4 1.2-4 1.2-3.1 0-5.7-2.1-6.6-4.9h-4v3.1A12 12 0 0 0 12 24z"/><path fill="#FBBC05" d="M5.4 14.4a7.2 7.2 0 0 1 0-4.7V6.6h-4a12 12 0 0 0 0 10.9l4-3.1z"/><path fill="#EA4335" d="M12 4.8c1.8 0 3.3.6 4.6 1.8l3.4-3.4A12 12 0 0 0 1.4 6.6l4 3.1C6.3 6.9 8.9 4.8 12 4.8z"/></svg>Continue with Google</div>
+              <div><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M7 12h10"/></svg>Continue with your OIDC</div>
+            </div>
+          </div>
+          <div class="st" id="t3">
+            <div class="cap">3 · your app gets a verified identity</div>
+            <div class="pass"><span class="seal">veri-<br>fied</span>
+              <div class="h">Guest pass</div>
+<pre>{<span class="k">"identity"</span>: {
+  <span class="k">"sub"</span>: "gh_583…",
+  <span class="k">"email"</span>: "ana@freelance.dev",
+  <span class="k">"name"</span>: "Ana",
+  <span class="k">"provider"</span>: "github" }}</pre>
+              <div class="ok">POST /v1/token → 200 · 1 successful auth billed</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <section id="start">
+    <p class="kick rv">Quick start</p>
+    <h2 class="rv">Four curls. <em>No OAuth code.</em></h2>
+    <div class="term rv">
+      <div class="term-top"><i></i><i></i><i></i><span>register · provider · wallet · exchange</span></div>
+<pre><span class="c"># 1. register your app</span>
+<span class="k">curl</span> -s -X POST https://portier.intrane.fr/v1/apps \
   -d '{"name":"my app","redirect_uris":"https://myapp.com/auth/done"}'
-# -&gt; {"app_id":"app_…","app_secret":"psk_…"}
+<span class="c"># -&gt; {"app_id":"app_…","app_secret":"psk_…"}</span>
 
-# 2. add a provider (try the built-in demo first — no real IdP needed)
-curl -s -X POST https://portier.intrane.fr/v1/apps/provider \
+<span class="c"># 2. add a provider (try the built-in demo first — no real IdP needed)</span>
+<span class="k">curl</span> -s -X POST https://portier.intrane.fr/v1/apps/provider \
   -H 'Authorization: Bearer psk_…' -d '{"kind":"demo"}'
 
-# 3. set a billing wallet (peage — funds auths past the free tier)
-curl -s -X POST https://portier.intrane.fr/v1/apps/wallet \
+<span class="c"># 3. set a billing wallet (peage — funds auths past the free tier)</span>
+<span class="k">curl</span> -s -X POST https://portier.intrane.fr/v1/apps/wallet \
   -H 'Authorization: Bearer psk_…' -d '{"wallet_token":"pw_…"}'
 
-# 4. send the user to portier; get ?code= back at your redirect_uri; exchange it:
-curl -s -X POST https://portier.intrane.fr/v1/token \
+<span class="c"># 4. send the user to portier; get ?code= back at your redirect_uri; exchange it:</span>
+<span class="k">curl</span> -s -X POST https://portier.intrane.fr/v1/token \
   -H 'Authorization: Bearer psk_…' -d '{"code":"pc_…"}'
-# -&gt; {"identity":{"sub":"…","email":"…","name":"…","provider":"github"}}</pre>
+<span class="c"># -&gt; </span><span class="g">{"identity":{"sub":"…","email":"…","name":"…","provider":"github"}}</span></pre>
+    </div>
+  </section>
 
-<div class="grid">
-<div class="card"><h3>The auth glue, deleted</h3><p>OAuth redirects, token exchange, userinfo, CSRF-safe state, open-redirect guards — portier does it. Your app makes two curls.</p></div>
-<div class="card"><h3>Pay only for logins that work</h3><p>Billed per <em>successful</em> auth, in blocks of 100 (1&nbsp;EUR), from a prepaid wallet. No MAU tiers, no annual contract.</p></div>
-</div>
+  <section>
+    <p class="kick rv">Why portier</p>
+    <div class="two rv">
+      <div class="card"><span class="n">i.</span><h3>The auth glue, deleted</h3><p>OAuth redirects, token exchange, userinfo, CSRF-safe state, open-redirect guards — portier does it. Your app makes two curls.</p></div>
+      <div class="card"><span class="n">ii.</span><h3>Pay only for logins that work</h3><p>Billed per <em>successful</em> auth, in blocks of 100 (1&nbsp;EUR), from a prepaid wallet. No MAU tiers, no annual contract.</p></div>
+    </div>
+  </section>
 
-<h2>providers</h2>
-<p><strong>GitHub, Google, and any generic OIDC provider</strong> (Keycloak, Auth0, Okta, GitLab — supply the discovery URLs) — plus open-source <strong><a href="https://github.com/javimosch/machin-idp">machin-idp</a></strong> (self-host; <a href="https://javimosch.github.io/machin-idp/">docs</a>). A built-in <strong>demo</strong> provider lets you test the whole flow with curl before wiring a real IdP. SAML is on the <a href="https://github.com/javimosch/machin/issues/484">roadmap</a> (it needs RSA/XML-DSig that the pure-MFL runtime doesn't have yet).</p>
+  <section id="providers">
+    <p class="kick rv">Providers</p>
+    <div class="providers rv">
+      <div>
+        <h2 style="margin-bottom:20px">Any door your <em>guests</em> use.</h2>
+        <p><strong>GitHub, Google, and any generic OIDC provider</strong> (Keycloak, Auth0, Okta, GitLab — supply the discovery URLs) — plus open-source <strong><a href="https://github.com/javimosch/machin-idp">machin-idp</a></strong> (self-host; <a href="https://javimosch.github.io/machin-idp/">docs</a>). A built-in <strong>demo</strong> provider lets you test the whole flow with curl before wiring a real IdP. SAML is on the <a href="https://github.com/javimosch/machin/issues/484">roadmap</a> (it needs RSA/XML-DSig that the pure-MFL runtime doesn't have yet).</p>
+      </div>
+      <div class="plist"><span><i></i>GitHub</span><span><i></i>Google</span><span><i></i>Generic OIDC</span><span><i></i>machin-idp</span><span><i></i>Keycloak · Auth0 · Okta · GitLab</span><span><i></i>demo provider</span><span class="soon"><i></i>SAML — roadmap</span></div>
+    </div>
+  </section>
 
-<h2>the interface is the docs</h2>
-<pre>curl -s https://portier.intrane.fr/llms.txt   # the full contract, written for agents
-curl -s https://portier.intrane.fr/guide      # the same contract as JSON</pre>
-
-<footer>portier is a single static binary in <a href="https://github.com/javimosch/machin">machin (MFL)</a>. An <a href="https://intrane.fr">intrane.fr</a> experiment. Billed via <a href="https://peage.intrane.fr">peage</a> — pay (péage), receive (<a href="https://relais.intrane.fr">relais</a>), authenticate (portier).  · <a href="https://status.dev.intrane.fr/g/portier">status</a> · Contact: javi@intrane.fr</footer>
+  <section>
+    <p class="kick rv">The interface is the docs</p>
+    <div class="term rv">
+      <div class="term-top"><i></i><i></i><i></i><span>written for agents</span></div>
+<pre><span class="k">curl</span> -s https://portier.intrane.fr/llms.txt   <span class="c"># the full contract, written for agents</span>
+<span class="k">curl</span> -s https://portier.intrane.fr/guide      <span class="c"># the same contract as JSON</span></pre>
+    </div>
+  </section>
 </main>
-<script src="https://chatsnip.intrane.fr/w.js" data-agent="pk_75d7d0fafeef051418af13e9" defer></script>
+
+<footer><div class="wrap">portier is a single static binary in <a href="https://github.com/javimosch/machin">machin (MFL)</a>. An <a href="https://intrane.fr">intrane.fr</a> experiment. Billed via <a href="https://peage.intrane.fr">peage</a> — pay (péage), receive (<a href="https://relais.intrane.fr">relais</a>), authenticate (portier).  · <a href="https://status.dev.intrane.fr/g/portier">status</a> · Contact: javi@intrane.fr</div></footer>
+
+<script>
+(function(){
+  var io='IntersectionObserver' in window?new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target);}});},{rootMargin:'0px 0px -8% 0px'}):null;
+  document.querySelectorAll('.rv').forEach(function(el){io?io.observe(el):el.classList.add('in');});
+  var $=function(i){return document.getElementById(i);}, st=['t1','t2','t3'], dots=['s1','s2','s3'];
+  function show(n){st.forEach(function(s,i){$(s).classList.toggle('on',i===n);});dots.forEach(function(d,i){$(d).classList.toggle('on',i<=n);});$('pg').classList.toggle('pick',n===1&&picked);}
+  var picked=false;
+  if(matchMedia('(prefers-reduced-motion: reduce)').matches){show(2);return;}
+  function loop(){picked=false;show(0);
+    setTimeout(function(){show(1);},2600);
+    setTimeout(function(){picked=true;show(1);},3900);
+    setTimeout(function(){show(2);},5000);
+    setTimeout(loop,9200);}
+  loop();
+})();
+</script>
+<script src="https://chatsnip.intrane.fr/w.js" data-agent="pk_75d7d0fafeef051418af13e9" data-color="#0e3b2e" defer></script>
 </body>
 </html>
